@@ -540,6 +540,7 @@ function rLoyers(){
   var late=rows.filter(function(r){return r.status==='late';}).length;
   var totalPaid=rows.filter(function(r){return r.status==='paid';}).reduce(function(a,r){return a+(r.pai?r.pai.montant:0);},0);
   var totalExp=rows.filter(function(r){return r.status!=='vacant';}).reduce(function(a,r){return a+(r.l.loyer+r.l.charges);},0);
+  var totalHC=rows.filter(function(r){return r.status!=='vacant';}).reduce(function(a,r){return a+r.l.loyer;},0);
   var occ=rows.filter(function(r){return r.status!=='vacant';}).length;
   var pct=occ>0?Math.round(paid/occ*100):0;
   var html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">';
@@ -549,7 +550,7 @@ function rLoyers(){
   html+='<div class="kpi bl"><div class="kl">Taux recouvrement</div><div class="kv">'+pct+'%</div></div>';
   html+='<div class="kpi '+(unpaid>0?'re':'gr')+'"><div class="kl">Impayés</div><div class="kv">'+unpaid+'</div></div>';
   html+='<div class="kpi '+(late>0?'or':'gr')+'"><div class="kl">En attente</div><div class="kv">'+late+'</div></div>';
-  html+='<div class="kpi go"><div class="kl">Total attendu</div><div class="kv">'+fmt(totalExp)+'</div></div></div>';
+  html+='<div class="kpi gr"><div class="kl">Attendu HC</div><div class="kv">'+fmt(totalHC)+'</div></div><div class="kpi go"><div class="kl">Attendu CC</div><div class="kv">'+fmt(totalExp)+'</div></div></div>';
   html+='<div style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--text3);margin-bottom:5px;"><span>Progression</span><span>'+paid+' / '+occ+'</span></div><div class="pb"><div class="pf pf-gr" style="width:'+pct+'%"></div></div></div>';
   html+='<div class="card"><div class="ch"><h3>Détail par logement</h3><button class="btn btn-p btn-sm" onclick="openAddPai(null,null)">+ Paiement</button></div>';
   if(!rows.length){html+='<div style="text-align:center;padding:24px;color:var(--text3);">Aucun logement enregistré.<br>Connectez votre compte JSONBin en haut ou ajoutez un bâtiment.</div>';}
