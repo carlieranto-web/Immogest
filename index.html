@@ -629,7 +629,7 @@ function showImpayes(){
     var l=DB.logements.find(function(x){return x.id===loc.logId;});
     var b=l?DB.batiments.find(function(x){return x.id===l.batId;}):null;
     var isImp=loc.statutPaiement==='Impayé';
-    html+='<div style="background:var(--s2);border-radius:9px;padding:12px 14px;margin-bottom:9px;border-left:3px solid '+(isImp?'var(--red)':'var(--orange')+');">';
+    html+='<div style="background:var(--s2);border-radius:9px;padding:12px 14px;margin-bottom:9px;border-left:3px solid '+(isImp?'var(--red)':'var(--orange)')+';">';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
     html+='<div><strong style="font-size:.85rem;">'+loc.prenom+' '+loc.nom+'</strong>';
     html+='<div style="font-size:.7rem;color:var(--text3);">'+(b?b.nom:'—')+' · '+(l?l.ref:'—')+'</div></div>';
