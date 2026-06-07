@@ -416,7 +416,7 @@ function gSCIBats(sid){return DB.batiments.filter(function(b){return b.sciId===s
 function gBatLogs(bid){return DB.logements.filter(function(l){return l.batId===bid;});}
 function gLogLoc(lid){return DB.locataires.find(function(l){return l.logId===lid;});}
 function gBatCh(bid){return DB.charges.filter(function(c){return c.batId===bid;});}
-function gBatPret(bid){var b=gBat(bid);return DB.prets.find(function(p){return p.batiment===b&&b.nom;});}
+function gBatPret(bid){var b=gBat(bid);if(!b)return null;return DB.prets.find(function(p){return p.batId===bid||(p.batiment&&p.batiment===b.nom);});}
 function gBatLoyer(bid){return gBatLogs(bid).reduce(function(a,l){return a+l.loyer*12;},0);}
 function gBatLoyerF(bid){return gBatLogs(bid).reduce(function(a,l){return a+(l.loyerFutur||l.loyer)*12;},0);}
 function gBatChAn(bid){return gBatCh(bid).reduce(function(a,c){if(c.freq==='Mensuelle')return a+c.montant*12;if(c.freq==='Trimestrielle')return a+c.montant*4;return a+c.montant;},0);}
@@ -774,15 +774,51 @@ function rBatPai(bid){
     html+='<td>'+(p.statut==='Payé'&&loc?'<button class="btn btn-sm btn-gr" onclick="cQuitt(\''+loc.id+'\')">🧾</button>':'')+'</td></tr>';});
   html+='</tbody></table></div>';return html;
 }
+function getSchedBalance(sched){
+  var today=new Date();today.setHours(0,0,0,0);
+  var bal=sched[0].balance,found=false;
+  for(var i=0;i<sched.length;i++){var d=new Date(sched[i].date);d.setHours(0,0,0,0);if(d<=today){bal=sched[i].balance;found=true;}else break;}
+  return bal;
+}
+function getSchedMens(sched){
+  var today=new Date();
+  for(var i=0;i<sched.length;i++){var d=new Date(sched[i].date);if(d>=today)return sched[i].total;}
+  return sched[sched.length-1].total;
+}
 function rBatAm(bid){
-  var p=gBatPret(bid);
-  if(!p)return'<div class="card"><div class="ch"><h3>Amortissement</h3><button class="btn btn-p btn-sm" onclick="oM(\'m-pret\')">+ Prêt</button></div><div style="text-align:center;padding:20px;color:var(--text3);">Aucun prêt associé</div></div>';
-  var rows=calAm(p),ci=calAmRow(p),mens=calMens(p.capital,p.taux,p.duree),rest=rows[ci]?rows[ci].r:0,remb=p.capital-rest,pct=Math.round(remb/p.capital*100);
-  var html='<div class="kpi-row"><div class="kpi go"><div class="kl">Capital</div><div class="kv">'+fmt(p.capital)+'</div></div><div class="kpi gr"><div class="kl">Remboursé</div><div class="kv">'+fmt(remb)+'</div></div><div class="kpi re"><div class="kl">Restant dû</div><div class="kv">'+fmt(rest)+'</div></div><div class="kpi bl"><div class="kl">Mensualité</div><div class="kv">'+fmt(mens)+'</div></div></div>';
-  html+='<div class="pb" style="height:7px;margin-bottom:12px;"><div class="pf pf-bl" style="width:'+pct+'%"></div></div>';
-  html+='<div class="card"><div class="ch"><h3>'+p.banque+' · '+p.taux+'% · '+p.duree+' mois</h3></div><div style="max-height:360px;overflow-y:auto;"><table style="font-size:.74rem;"><thead><tr><th>#</th><th>Mois</th><th>Mensualité</th><th>Capital</th><th>Intérêts</th><th>Restant</th></tr></thead><tbody>';
-  rows.slice(Math.max(0,ci-2),ci+12).forEach(function(r){html+='<tr class="'+(r.n===ci+1?'amort-cur':'')+'"><td class="muted">'+r.n+(r.n===ci+1?' '+bdg('Courant','bb'):'')+'</td><td>'+r.date+'</td><td>'+fmt(r.m)+'</td><td style="color:var(--green)">'+fmt(r.am)+'</td><td style="color:var(--text3)">'+fmt(r.intr)+'</td><td>'+fmt(r.r)+'</td></tr>';});
-  html+='</tbody></table></div></div>';return html;
+  var prets=DB.prets.filter(function(p){return p.batId===bid||(gBat(bid)&&p.batiment===gBat(bid).nom);});
+  if(!prets.length)return'<div class="card"><div class="ch"><h3>Amortissement</h3><button class="btn btn-p btn-sm" onclick="oM(\'m-pret\')">+ Prêt</button></div><div style="text-align:center;padding:20px;color:var(--text3);">Aucun prêt associé</div></div>';
+  var html='';
+  prets.forEach(function(p){
+    if(p.hasSchedule&&p.schedule&&p.schedule.length){
+      var sched=p.schedule;
+      var rest=getSchedBalance(sched);
+      var mens=getSchedMens(sched);
+      var capital=p.capital;
+      var remb=capital-rest;
+      var pct=Math.round(remb/capital*100);
+      var today=new Date();today.setHours(0,0,0,0);
+      html+='<div class="kpi-row"><div class="kpi go"><div class="kl">Capital initial</div><div class="kv">'+fmt(capital)+'</div></div><div class="kpi gr"><div class="kl">Remboursé</div><div class="kv">'+fmt(remb)+'</div></div><div class="kpi re"><div class="kl">Restant dû</div><div class="kv">'+fmt(rest)+'</div></div><div class="kpi bl"><div class="kl">Mensualité</div><div class="kv">'+fmt(mens)+'</div></div></div>';
+      html+='<div class="pb" style="height:7px;margin-bottom:12px;"><div class="pf pf-bl" style="width:'+pct+'%"></div></div>';
+      html+='<div class="card" style="margin-bottom:12px;"><div class="ch"><h3>'+p.banque+' · Contrat '+p.contrat+' · '+p.taux+'% · Fin '+p.dateFin+'</h3></div><div style="max-height:320px;overflow-y:auto;"><table style="font-size:.74rem;"><thead><tr><th>Éch.</th><th>Date</th><th>Mensualité</th><th>Capital</th><th>Intérêts</th><th>Restant dû</th></tr></thead><tbody>';
+      var cur=-1;
+      for(var i=0;i<sched.length;i++){var d=new Date(sched[i].date);d.setHours(0,0,0,0);if(d<=today)cur=i;}
+      var from=Math.max(0,cur-1),to=Math.min(sched.length,cur+8);
+      sched.slice(from,to).forEach(function(r){
+        var isCur=(new Date(r.date).setHours(0,0,0,0)>today.getTime())&&sched.indexOf(r)===cur+1;
+        html+='<tr class="'+(isCur?'amort-cur':'')+'"><td class="muted">'+r.num+(isCur?' '+bdg('Courant','bb'):'')+'</td><td>'+r.date+'</td><td>'+fmt(r.total)+'</td><td style="color:var(--green)">'+fmt(r.principal)+'</td><td style="color:var(--text3)">'+fmt(r.interest)+'</td><td>'+fmt(r.balance)+'</td></tr>';
+      });
+      html+='</tbody></table></div></div>';
+    } else {
+      var rows=calAm(p),ci=calAmRow(p),mens=calMens(p.capital,p.taux,p.duree),rest=rows[ci]?rows[ci].r:0,remb=p.capital-rest,pct=Math.round(remb/p.capital*100);
+      html+='<div class="kpi-row"><div class="kpi go"><div class="kl">Capital</div><div class="kv">'+fmt(p.capital)+'</div></div><div class="kpi gr"><div class="kl">Remboursé</div><div class="kv">'+fmt(remb)+'</div></div><div class="kpi re"><div class="kl">Restant dû</div><div class="kv">'+fmt(rest)+'</div></div><div class="kpi bl"><div class="kl">Mensualité</div><div class="kv">'+fmt(mens)+'</div></div></div>';
+      html+='<div class="pb" style="height:7px;margin-bottom:12px;"><div class="pf pf-bl" style="width:'+pct+'%"></div></div>';
+      html+='<div class="card"><div class="ch"><h3>'+p.banque+' · '+p.taux+'% · '+p.duree+' mois</h3></div><div style="max-height:360px;overflow-y:auto;"><table style="font-size:.74rem;"><thead><tr><th>#</th><th>Mois</th><th>Mensualité</th><th>Capital</th><th>Intérêts</th><th>Restant</th></tr></thead><tbody>';
+      rows.slice(Math.max(0,ci-2),ci+12).forEach(function(r){html+='<tr class="'+(r.n===ci+1?'amort-cur':'')+'"><td class="muted">'+r.n+(r.n===ci+1?' '+bdg('Courant','bb'):'')+'</td><td>'+r.date+'</td><td>'+fmt(r.m)+'</td><td style="color:var(--green)">'+fmt(r.am)+'</td><td style="color:var(--text3)">'+fmt(r.intr)+'</td><td>'+fmt(r.r)+'</td></tr>';});
+      html+='</tbody></table></div></div>';
+    }
+  });
+  return html;
 }
 
 // ═══ PAGE: TRAVAUX ═══
