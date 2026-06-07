@@ -326,7 +326,9 @@ function syncPush(){
 function syncPull(){
   if(!SYNC.apiKey||!SYNC.binId)return;setSS('syncing');
   fetch('https://api.jsonbin.io/v3/b/'+SYNC.binId+'/latest',{headers:{'X-Master-Key':SYNC.apiKey,'X-Bin-Meta':'false'}}).then(function(r){return r.ok?r.json():Promise.reject();}).then(function(d){
-    ['scis','batiments','logements','locataires','charges','prets','paiements','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});
+    ['scis','batiments','logements','locataires','paiements','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});
+    if(d['charges']&&d['charges'].length>0)DB.charges=d['charges'];
+    if(d['prets']&&d['prets'].length>0)DB.prets=d['prets'];
     try{localStorage.setItem(SK,JSON.stringify(d));}catch(e){}
     setSS('ok');toast('Données synchronisées ✓');buildSidebar();gPage('dashboard');
   }).catch(function(){setSS('error');});
