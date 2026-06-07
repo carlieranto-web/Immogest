@@ -591,7 +591,7 @@ function rDash(){
   html+='<div class="kpi-row">';
   html+='<div class="kpi go"><div class="kl">Patrimoine</div><div class="kv">'+fmt(patr)+'</div></div>';
   html+='<div class="kpi gr"><div class="kl">Revenus bruts/an</div><div class="kv">'+fmt(lb)+'</div><div class="ks">'+fmt(lb/12)+' /mois</div></div>';
-  html+='<div class="kpi bl"><div class="kl">Revenu mensuel HC</div><div class="kv">'+fmt(dHC)+'</div><div class="ks">CC : '+fmt(dCC)+'</div></div>';
+  html+='<div class="kpi bl"><div class="kl">Loyers attendus/mois</div><div class="kv">'+fmt(dCC)+'</div><div class="ks">HC : '+fmt(dHC)+'</div></div>';
   html+='<div class="kpi bl"><div class="kl">Occupation</div><div class="kv">'+(al.length?Math.round(occ/al.length*100):0)+'%</div></div>';
   html+='<div class="kpi '+(imp>0?'re':'gr')+'" style="cursor:'+(imp>0?'pointer':'default')+'" onclick="'+(imp>0?'showImpayes()':'')+'"><div class="kl">Impayés/Retards</div><div class="kv">'+imp+'</div>'+(imp>0?'<div class="ks">Cliquer pour détail</div>':'')+'</div>';
   html+='<div class="kpi gr"><div class="kl">Net/an</div><div class="kv">'+fmt(lb-ch)+'</div></div>';
