@@ -557,7 +557,7 @@ function rLoyers(){
     var sc=r.status==='paid'?'var(--green)':r.status==='unpaid'?'var(--red)':'var(--orange)';
     html+='<div class="lr '+r.status+'">';
     html+='<div style="min-width:90px"><strong style="font-size:.8rem">'+r.l.ref+'</strong><div style="font-size:.67rem;color:var(--text3)">'+(r.bat?r.bat.nom.split(' ').slice(-1)[0]:'')+'</div></div>';
-    html+='<div style="flex:1"><div style="font-size:.78rem">'+(r.loc?'<span class="ll" onclick="goLoc(\''+r.loc.id+'\')">'+r.loc.prenom+' '+r.loc.nom+'</span>':'<span style="color:var(--text3)">Vacant</span>')+'</div><div style="font-size:.67rem;color:var(--text3)">'+(r.l.loyer>0?fmt(r.l.loyer)+' HC':'')+'</div></div>';
+    html+='<div style="flex:1"><div style="font-size:.78rem">'+(r.loc?'<span class="ll" onclick="goLoc(\''+r.loc.id+'\')">'+r.loc.prenom+' '+r.loc.nom+'</span>':'<span style="color:var(--text3)">Vacant</span>')+'</div>'+(r.l.loyer>0?'<div style="font-size:.67rem;color:var(--text3);display:flex;gap:8px;"><span>'+fmt(r.l.loyer)+' HC</span><span style="color:var(--text3)">+'+fmt(r.l.charges)+' ch.</span><span style="color:var(--accent2);font-weight:600;">= '+fmt(r.l.loyer+r.l.charges)+' CC</span></div>':'')+'</div>';
     html+='<div style="min-width:80px;text-align:right"><strong style="font-size:.78rem;color:'+sc+'">'+(r.pai&&r.pai.montant>0?fmt(r.pai.montant):r.status!=='vacant'?'—':'Vacant')+'</strong></div>';
     html+='<div style="min-width:80px;text-align:center">'+sBdg(r.status==='paid'?'Payé':r.status==='unpaid'?'Impayé':r.status==='vacant'?'Vacant':'En attente')+'</div>';
     html+='<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;min-width:150px;">';
@@ -589,7 +589,8 @@ function rDash(){
   html+='<div class="kpi-row"><div class="kpi go"><div class="kl">Patrimoine</div><div class="kv">'+fmt(patr)+'</div></div>';
   var dHC=DB.batiments.reduce(function(a,b){return a+gBatLogs(b.id).reduce(function(x,l){return x+(l.statut==='Occupé'?l.loyer:0);},0);},0);
   var dCC=DB.batiments.reduce(function(a,b){return a+gBatLogs(b.id).reduce(function(x,l){return x+(l.statut==='Occupé'?(l.loyer+(l.charges||0)):0);},0);},0);
-  html+='<div class="kpi gr"><div class="kl">Revenus bruts/an</div><div class="kv">'+fmt(lb)+'</div><div class="ks">HC/mois : '+fmt(dHC)+'  ·  CC : '+fmt(dCC)+'</div></div>';
+  html+='<div class="kpi gr"><div class="kl">Revenus bruts/an</div><div class="kv">'+fmt(lb)+'</div><div class="ks">'+fmt(lb/12)+' /mois</div></div>';
+  html+='<div class="kpi bl"><div class="kl">Revenu mensuel HC</div><div class="kv">'+fmt(dHC)+'</div><div class="ks">CC : '+fmt(dCC)+'</div></div>';
   html+='<div class="kpi bl"><div class="kl">Occupation</div><div class="kv">'+(al.length?Math.round(occ/al.length*100):0)+'%</div></div>';
   html+='<div class="kpi '+(imp>0?'re':'gr')+'" style="cursor:'+(imp>0?'pointer':'default')+'" onclick="'+(imp>0?'showImpayes()':'')+'"><div class="kl">Impayés/Retards</div><div class="kv">'+imp+'</div>'+(imp>0?'<div class="ks">Cliquer pour détail</div>':'')+'</div>';
   html+='<div class="kpi gr"><div class="kl">Net/an</div><div class="kv">'+fmt(lb-ch)+'</div></div></div>';
