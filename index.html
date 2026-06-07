@@ -618,33 +618,35 @@ function rDash(){
 
 function showImpayes(){
   var imp=DB.locataires.filter(function(l){return l.statutPaiement==='Impayé'||l.statutPaiement==='Retard';});
-  var html='<div style="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2000;display:flex;align-items:center;justify-content:center;" onclick="if(event.target===this)this.remove()">';
+  var html='';
+  html+='<div style="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2000;display:flex;align-items:center;justify-content:center;" id="imp-overlay">';
   html+='<div style="background:var(--s1);border:1px solid var(--border2);border-radius:14px;width:94%;max-width:620px;max-height:85vh;overflow-y:auto;">';
   html+='<div style="padding:14px 17px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">';
-  html+='<h3 style="font-family:'Cormorant Garamond',serif;font-size:1.1rem;">⚠️ Impayés & Retards</h3>';
-  html+='<button onclick="this.closest('div[style*=fixed]').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:1.2rem;">×</button></div>';
+  html+='<h3 style="font-size:1.1rem;">⚠️ Impayés &amp; Retards</h3>';
+  html+='<button onclick="document.getElementById(\'imp-overlay\').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:1.2rem;">×</button></div>';
   html+='<div style="padding:14px;">';
   if(!imp.length){html+='<div style="text-align:center;color:var(--text3);padding:20px;">Aucun impayé</div>';}
   else imp.forEach(function(loc){
-    var l=DB.logements.find(function(x){return x.id===loc.logId;});
-    var b=l?DB.batiments.find(function(x){return x.id===l.batId;}):null;
+    var lg=DB.logements.find(function(x){return x.id===loc.logId;});
+    var b=lg?DB.batiments.find(function(x){return x.id===lg.batId;}):null;
     var isImp=loc.statutPaiement==='Impayé';
     html+='<div style="background:var(--s2);border-radius:9px;padding:12px 14px;margin-bottom:9px;border-left:3px solid '+(isImp?'var(--red)':'var(--orange)')+';">';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
     html+='<div><strong style="font-size:.85rem;">'+loc.prenom+' '+loc.nom+'</strong>';
-    html+='<div style="font-size:.7rem;color:var(--text3);">'+(b?b.nom:'—')+' · '+(l?l.ref:'—')+'</div></div>';
+    html+='<div style="font-size:.7rem;color:var(--text3);">'+(b?b.nom:'—')+' · '+(lg?lg.ref:'—')+'</div></div>';
     html+='<span class="badge '+(isImp?'br':'bo')+'">'+(isImp?'Impayé':'Retard')+'</span></div>';
     html+='<div style="display:flex;gap:8px;flex-wrap:wrap;">';
     if(loc.tel)html+='<a href="tel:'+loc.tel+'" class="btn btn-g btn-sm">📞 '+loc.tel+'</a>';
     if(loc.email)html+='<a href="mailto:'+loc.email+'" class="btn btn-g btn-sm">📧</a>';
-    html+='<button class="btn btn-r btn-sm" onclick="cRelance(''+loc.id+'')">✉ Relancer</button>';
-    html+='<button class="btn btn-g btn-sm" onclick="goLoc(''+loc.id+'');this.closest('div[style*=fixed]').remove()">👤 Fiche</button>';
-    if(l)html+='<span style="font-size:.75rem;color:var(--text2);align-self:center;">'+fmt(l.loyer+l.charges)+' CC</span>';
+    html+='<button class="btn btn-r btn-sm" onclick="cRelance(\''+loc.id+'\')">✉ Relancer</button>';
+    html+='<button class="btn btn-g btn-sm" onclick="document.getElementById(\'imp-overlay\').remove();goLoc(\''+loc.id+'\')">👤 Fiche</button>';
+    if(lg)html+='<span style="font-size:.75rem;color:var(--text2);align-self:center;">'+fmt(lg.loyer+lg.charges)+' CC</span>';
     html+='</div></div>';
   });
   html+='</div></div></div>';
   var el=document.createElement('div');el.innerHTML=html;document.body.appendChild(el.firstChild);
 }
+
 
 // ═══ PAGE: STATS ═══
 function rStats(){
