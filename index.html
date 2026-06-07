@@ -309,7 +309,10 @@ function persist(){
 }
 function loadPersisted(){
   try{var r=localStorage.getItem(SK);if(!r)return false;var d=JSON.parse(r);
-  ['scis','batiments','logements','locataires','charges','prets','paiements','documents','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});return true;}
+  ['scis','batiments','logements','locataires','paiements','documents','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});
+    if(d['charges']&&d['charges'].length>0){var eIds=DB.charges.map(function(c){return c.id;});d['charges'].forEach(function(c){if(eIds.indexOf(c.id)<0)DB.charges.push(c);});}
+    if(d['prets']&&d['prets'].length>0){var ePIds=DB.prets.map(function(p){return p.id;});d['prets'].forEach(function(p){if(ePIds.indexOf(p.id)<0)DB.prets.push(p);});}
+    return true;}
   catch(e){return false;}
 }
 function loadSecurity(){try{var r=localStorage.getItem(SECK);if(r){var d=JSON.parse(r);SEC.pins=d.pins;}}catch(e){}}
@@ -327,8 +330,14 @@ function syncPull(){
   if(!SYNC.apiKey||!SYNC.binId)return;setSS('syncing');
   fetch('https://api.jsonbin.io/v3/b/'+SYNC.binId+'/latest',{headers:{'X-Master-Key':SYNC.apiKey,'X-Bin-Meta':'false'}}).then(function(r){return r.ok?r.json():Promise.reject();}).then(function(d){
     ['scis','batiments','logements','locataires','paiements','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});
-    if(d['charges']&&d['charges'].length>0)DB.charges=d['charges'];
-    if(d['prets']&&d['prets'].length>0)DB.prets=d['prets'];
+    if(d['charges']&&d['charges'].length>0){
+      var existIds=DB.charges.map(function(c){return c.id;});
+      d['charges'].forEach(function(c){if(existIds.indexOf(c.id)<0)DB.charges.push(c);});
+    }
+    if(d['prets']&&d['prets'].length>0){
+      var existPIds=DB.prets.map(function(p){return p.id;});
+      d['prets'].forEach(function(p){if(existPIds.indexOf(p.id)<0)DB.prets.push(p);});
+    }
     try{localStorage.setItem(SK,JSON.stringify(d));}catch(e){}
     setSS('ok');toast('Données synchronisées ✓');buildSidebar();gPage('dashboard');
   }).catch(function(){setSS('error');});
@@ -743,13 +752,6 @@ function rBatCh(bid){
   var byF=function(c){return c.freq==='Mensuelle'?c.montant*12:c.freq==='Trimestrielle'?c.montant*4:c.montant;};
   var cats=[];ch.forEach(function(c){if(cats.indexOf(c.cat)<0)cats.push(c.cat);});
   var html='<div class="card"><div class="ch"><h3>Charges</h3><div class="ca"><span style="font-size:.77rem;color:var(--text3)">Total/an:</span><strong style="color:var(--red)">'+fmt(tot)+'</strong><button class="btn btn-p btn-sm" onclick="openAddCharge(\''+bid+'\')">+ Charge</button></div></div><div style="padding:12px;">';
-  var locsAvecCh=logs.filter(function(l){return l.charges>0;});
-  if(locsAvecCh.length){
-    html+='<div style="background:rgba(61,142,240,.06);border:1px solid rgba(61,142,240,.18);border-radius:9px;padding:11px 13px;margin-bottom:12px;">';
-    html+='<div style="display:flex;justify-content:space-between;margin-bottom:8px;font-size:.61rem;letter-spacing:1.8px;text-transform:uppercase;color:var(--accent2);">PROVISIONS LOCATAIRES<strong style="color:var(--accent2)">'+fmt(locsAvecCh.reduce(function(a,l){return a+l.charges*12;},0))+'/an</strong></div>';
-    locsAvecCh.forEach(function(l){var loc=gLogLoc(l.id);html+='<div class="chr"><span>'+l.ref+(loc?' · <span class="ll" onclick="goLoc(\''+loc.id+'\')">'+loc.prenom+' '+loc.nom+'</span>':'')+'</span><span style="display:flex;align-items:center;gap:7px;"><strong style="color:var(--accent2)">'+fmt(l.charges)+'/mois</strong><button class="btn btn-sm btn-g" style="padding:2px 5px" onclick="openEditLog(\''+l.id+'\')">✏️</button></span></div>';});
-    html+='</div>';
-  }
   html+='<div class="sep">Dépenses bâtiment</div>';
   if(!cats.length){html+='<div style="text-align:center;padding:14px;color:var(--text3);font-size:.77rem;">Aucune charge</div>';}
   else cats.forEach(function(cat){var items=ch.filter(function(c){return c.cat===cat;});var t2=items.reduce(function(a,c){return a+byF(c);},0);
