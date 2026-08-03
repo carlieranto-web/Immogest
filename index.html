@@ -533,8 +533,9 @@ function setAct(sel){document.querySelectorAll('.sh,.bi,.nf').forEach(function(e
 // ═══ NAVIGATION ═══
 var PAGES={loyers:rLoyers,dashboard:rDash,stats:rStats,travaux:rTravaux,fiscalite:rFiscalite,patrimoine:rPatr,banque:rBanque,prets:rPrets,messagerie:rMsg,emails:rEmails,taches:rTaches,parametres:rParams,'banque-import':rBanqueImport};
 var PLABELS={loyers:'Loyers du mois',dashboard:'Vue globale',stats:'Statistiques',travaux:'Travaux',fiscalite:'Fiscalité',patrimoine:'Patrimoine',banque:'Dossier Banque',prets:'Prêts',messagerie:'Messagerie',emails:'Emails & Relances',taches:'Mes tâches',parametres:'Paramètres','banque-import':'Import relevé'};
-function gPage(p){DB._cv={type:'global',id:p};setAct('#nav-'+p);setBc('',PLABELS[p]||p);setTba([]);if(PAGES[p])PAGES[p]();else rDash();}
+function gPage(p){if(window.innerWidth<=860)closeSidebarMobile();DB._cv={type:'global',id:p};setAct('#nav-'+p);setBc('',PLABELS[p]||p);setTba([]);if(PAGES[p])PAGES[p]();else rDash();}
 function goBat(bid){
+  if(window.innerWidth<=860)closeSidebarMobile();
   var bat=gBat(bid),sci=gSCI(bat.sciId);DB._cv={type:'bat',id:bid};
   ['bl-'+bat.sciId,'sh-'+bat.sciId,'sa-'+bat.sciId].forEach(function(id){var e=document.getElementById(id);if(e)e.classList.add('open');});
   setAct('#bi-'+bid);setBc('🏛 '+sci.nom+' ›',bat.nom);
@@ -545,7 +546,7 @@ function goBat(bid){
     {l:'🗑',c:'btn-da owner-only',f:"openDelBat('"+bid+"')"}]);
   rBat(bid);
 }
-function goLoc(locId){DB._cv={type:'loc',id:locId};setBc('👤','Fiche locataire');setTba([{l:'✏️ Modifier',c:'btn-g',f:"openEditLoc('"+locId+"')"},{l:'Quittance',c:'btn-gr',f:"cQuitt('"+locId+"')"},{l:'Relancer',c:'btn-r',f:"cRelance('"+locId+"')"}]);rLocDetail(locId);}
+function goLoc(locId){if(window.innerWidth<=860)closeSidebarMobile();DB._cv={type:'loc',id:locId};setBc('👤','Fiche locataire');setTba([{l:'✏️ Modifier',c:'btn-g',f:"openEditLoc('"+locId+"')"},{l:'Quittance',c:'btn-gr',f:"cQuitt('"+locId+"')"},{l:'Relancer',c:'btn-r',f:"cRelance('"+locId+"')"}]);rLocDetail(locId);}
 function setBc(pre,t){document.getElementById('bc').innerHTML=pre?'<span>'+pre+'</span> <strong>'+t+'</strong>':'<strong>'+t+'</strong>';}
 function setTba(acts){document.getElementById('tba').innerHTML=acts.map(function(a){return '<button class="btn '+a.c+'" onclick="'+a.f+'">'+a.l+'</button>';}).join('');applyRole();}
 
