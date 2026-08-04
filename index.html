@@ -311,13 +311,42 @@ textarea{resize:vertical;min-height:60px;}
 <div class="overlay" id="m-export-view"><div class="modal wide"><div class="mh"><h3>Export JSON</h3><button class="xb" onclick="cM('m-export-view')">×</button></div><div class="mb"><div class="alert ai" style="margin-bottom:9px;">Copiez ce texte et sauvegardez-le comme fichier .json</div><textarea id="export-ta" style="width:100%;height:300px;font-family:monospace;font-size:.71rem;background:var(--s2);border:1px solid var(--border2);border-radius:8px;padding:10px;color:var(--text);resize:none;" readonly></textarea></div><div class="mf"><button class="btn btn-g" onclick="cM('m-export-view')">Fermer</button><button class="btn btn-p" onclick="navigator.clipboard.writeText(document.getElementById('export-ta').value).then(function(){toast('Copié');})">Copier</button></div></div></div>
 
 <script>
+var APP_VERSION=null;
 // ═══ STORAGE ═══
 var SK='immogest_v4',SECK='immogest_sec_v4',SYNCK='immogest_sync_v4';
 var SYNC={apiKey:'$2a$10$GRwXJfYzrhWMd3z4V/H64.eGDZppuhXLR5qXoBEjen.SUjWDLMHLi',binId:'69f6e13e36566621a81c10bc',status:'idle'};
 
 function loadSync(){try{var r=localStorage.getItem(SYNCK);if(r){var d=JSON.parse(r);if(d.apiKey)SYNC.apiKey=d.apiKey;if(d.binId)SYNC.binId=d.binId;}}catch(e){}}
 function saveSync(){try{localStorage.setItem(SYNCK,JSON.stringify({apiKey:SYNC.apiKey,binId:SYNC.binId}));}catch(e){}}
+var _snapCache={};
+function touchTimestamps(){
+  ['scis','batiments','logements','locataires','paiements','travaux','taches','messages','charges','prets'].forEach(function(key){
+    var arr=DB[key];if(!arr||!arr.forEach)return;
+    var prev=_snapCache[key];var cur={};
+    arr.forEach(function(rec){
+      if(!rec||!rec.id)return;
+      var stripped=JSON.stringify(rec,function(k,v){return k==='_ts'?undefined:v;});
+      cur[rec.id]=stripped;
+      if(prev&&prev[rec.id]!==stripped){rec._ts=Date.now();}
+    });
+    _snapCache[key]=cur;
+  });
+}
+function mergeArr(localArr,remoteArr){
+  localArr=localArr||[];remoteArr=remoteArr||[];
+  var map={},order=[];
+  localArr.forEach(function(r){if(r&&r.id){map[r.id]=r;order.push(r.id);}});
+  remoteArr.forEach(function(r){
+    if(!r||!r.id)return;
+    var loc=map[r.id];
+    if(!loc){map[r.id]=r;order.push(r.id);return;}
+    var lt=loc._ts||0,rt=r._ts||0;
+    if(rt>lt)map[r.id]=r;
+  });
+  return order.map(function(id){return map[id];}).filter(Boolean);
+}
 function persist(){
+  touchTimestamps();
   try{localStorage.setItem(SK,JSON.stringify({scis:DB.scis,batiments:DB.batiments,logements:DB.logements,locataires:DB.locataires,charges:DB.charges,prets:DB.prets,paiements:DB.paiements,documents:DB.documents,messages:DB.messages,settings:DB.settings,travaux:DB.travaux,taches:DB.taches,notes:DB.notes}));}catch(e){}
   schedulePush();
 }
@@ -362,16 +391,12 @@ async function syncPull(){
     if(!r.ok){setSS('error');return;}
     var d=await r.json();
     if(d&&d.gz){var json=await unGzB64(d.gz);d=JSON.parse(json);}
-    ['scis','batiments','logements','locataires','paiements','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});
-    if(d['charges']&&d['charges'].length>0){
-      var existIds=DB.charges.map(function(c){return c.id;});
-      d['charges'].forEach(function(c){if(existIds.indexOf(c.id)<0)DB.charges.push(c);});
-    }
-    if(d['prets']&&d['prets'].length>0){
-      var existPIds=DB.prets.map(function(p){return p.id;});
-      d['prets'].forEach(function(p){if(existPIds.indexOf(p.id)<0)DB.prets.push(p);});
-    }
-    try{localStorage.setItem(SK,JSON.stringify(d));}catch(e){}
+    ['scis','batiments','logements','locataires','paiements','travaux','taches','messages','charges','prets'].forEach(function(k){
+      if(d[k]!==undefined)DB[k]=mergeArr(DB[k],d[k]);
+    });
+    if(d['settings']!==undefined&&!DB.settings)DB.settings=d['settings'];
+    if(d['notes']!==undefined&&(!DB.notes||Object.keys(DB.notes).length===0))DB.notes=d['notes'];
+    persist();
     setSS('ok');toast('Données synchronisées ✓');buildSidebar();gPage('dashboard');
   }catch(e){setSS('error');}
 }
@@ -1217,6 +1242,28 @@ function importData(e){var f=e.target.files[0];if(!f)return;var r=new FileReader
 loadSecurity();loadSync();loadTheme();
 var hadData=loadPersisted();
 if(!hadData)persist();
+function checkFreshness(){
+  fetch(location.origin+'/',{method:'HEAD',cache:'no-store'}).then(function(r){
+    var v=r.headers.get('X-App-Version');
+    if(!v)return;
+    if(!window.APP_VERSION){window.APP_VERSION=v;return;}
+    if(v!==window.APP_VERSION){
+      if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(reg){reg.unregister();});});}
+      if('caches' in window){caches.keys().then(function(ks){ks.forEach(function(k){caches.delete(k);});});}
+      location.reload();
+    }
+  }).catch(function(){});
+}
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible'){
+    checkFreshness();
+    var appVisible=document.getElementById('app')&&document.getElementById('app').classList.contains('visible');
+    if(appVisible&&SYNC.apiKey&&SYNC.binId&&!_sTO){syncPull();}
+  }
+});
+window.addEventListener('pageshow',function(e){if(e.persisted){checkFreshness();}});
+setTimeout(checkFreshness,3000);
+
 
 function toggleSidebar(){
   var sb=document.querySelector('.sidebar'),ov=document.getElementById('sidebar-overlay');
