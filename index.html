@@ -335,14 +335,33 @@ function persistSecurity(){try{localStorage.setItem(SECK,JSON.stringify({pins:SE
 var _sTO=null;
 function schedulePush(){if(!SYNC.apiKey||!SYNC.binId)return;clearTimeout(_sTO);setSS('pending');_sTO=setTimeout(syncPush,3500);}
 function setSS(s){SYNC.status=s;var dot=document.getElementById('sync-dot');if(!dot)return;var c={idle:'var(--text3)',pending:'var(--gold)',syncing:'var(--accent)',ok:'var(--green)',error:'var(--red)'}[s]||'var(--text3)';dot.style.background=c;}
-function syncPush(){
+async function gzB64(str){
+  var st=new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+  var buf=await new Response(st).arrayBuffer();var b=new Uint8Array(buf),s='';
+  for(var i=0;i<b.length;i++)s+=String.fromCharCode(b[i]);return btoa(s);
+}
+async function unGzB64(b64){
+  var bin=atob(b64),bytes=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  var st=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  var buf=await new Response(st).arrayBuffer();return new TextDecoder().decode(buf);
+}
+async function syncPush(){
   if(!SYNC.apiKey||!SYNC.binId)return;setSS('syncing');
   var data={scis:DB.scis,batiments:DB.batiments,logements:DB.logements,locataires:DB.locataires,charges:DB.charges,prets:DB.prets,paiements:DB.paiements,messages:DB.messages,settings:DB.settings,travaux:DB.travaux,taches:DB.taches,notes:DB.notes};
-  fetch('https://api.jsonbin.io/v3/b/'+SYNC.binId,{method:'PUT',headers:{'Content-Type':'application/json','X-Master-Key':SYNC.apiKey,'X-Bin-Versioning':'true'},body:JSON.stringify(data)}).then(function(r){setSS(r.ok?'ok':'error');}).catch(function(){setSS('error');});
+  try{
+    var json=JSON.stringify(data),body;
+    if(window.CompressionStream){body=JSON.stringify({gz:await gzB64(json)});}else{body=json;}
+    var r=await fetch('https://api.jsonbin.io/v3/b/'+SYNC.binId,{method:'PUT',headers:{'Content-Type':'application/json','X-Master-Key':SYNC.apiKey,'X-Bin-Versioning':'true'},body:body});
+    setSS(r.ok?'ok':'error');
+  }catch(e){setSS('error');}
 }
-function syncPull(){
+async function syncPull(){
   if(!SYNC.apiKey||!SYNC.binId)return;setSS('syncing');
-  fetch('https://api.jsonbin.io/v3/b/'+SYNC.binId+'/latest',{headers:{'X-Master-Key':SYNC.apiKey,'X-Bin-Meta':'false'}}).then(function(r){return r.ok?r.json():Promise.reject();}).then(function(d){
+  try{
+    var r=await fetch('https://api.jsonbin.io/v3/b/'+SYNC.binId+'/latest',{headers:{'X-Master-Key':SYNC.apiKey,'X-Bin-Meta':'false'}});
+    if(!r.ok){setSS('error');return;}
+    var d=await r.json();
+    if(d&&d.gz){var json=await unGzB64(d.gz);d=JSON.parse(json);}
     ['scis','batiments','logements','locataires','paiements','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});
     if(d['charges']&&d['charges'].length>0){
       var existIds=DB.charges.map(function(c){return c.id;});
@@ -354,7 +373,7 @@ function syncPull(){
     }
     try{localStorage.setItem(SK,JSON.stringify(d));}catch(e){}
     setSS('ok');toast('Données synchronisées ✓');buildSidebar();gPage('dashboard');
-  }).catch(function(){setSS('error');});
+  }catch(e){setSS('error');}
 }
 
 // ═══ SECURITY ═══
@@ -1142,7 +1161,7 @@ function saveMgrSettings(){DB.settings.managerName=gv('set-mgr-nom');DB.settings
 function saveSyncSettings(){SYNC.apiKey=gv('sync-api-key').trim();SYNC.binId=gv('sync-bin-id').trim();saveSync();if(SYNC.apiKey&&SYNC.binId)syncPull();else{setSS('idle');toast('Sync désactivée');}}
 function createBin(){var key=gv('sync-api-key').trim();if(!key){toast('Entrez votre API Key',true);return;}SYNC.apiKey=key;setSS('syncing');var data={scis:DB.scis,batiments:DB.batiments,logements:DB.logements,locataires:DB.locataires,charges:DB.charges,prets:DB.prets,paiements:DB.paiements,messages:DB.messages,settings:DB.settings,travaux:DB.travaux,taches:DB.taches,notes:DB.notes};fetch('https://api.jsonbin.io/v3/b',{method:'POST',headers:{'Content-Type':'application/json','X-Master-Key':SYNC.apiKey,'X-Bin-Name':'ImmoGest','X-Bin-Private':'true','X-Bin-Versioning':'true'},body:JSON.stringify(data)}).then(function(r){return r.ok?r.json():Promise.reject('Erreur '+r.status);}).then(function(d){SYNC.binId=d.metadata.id;var el=document.getElementById('sync-bin-id');if(el)el.value=SYNC.binId;saveSync();setSS('ok');toast('Bin créé ✓ — copiez le Bin ID sur vos autres appareils');}).catch(function(e){setSS('error');toast('Erreur — vérifiez votre API Key',true);});}
 function exportData(){var d={scis:DB.scis,batiments:DB.batiments,logements:DB.logements,locataires:DB.locataires,charges:DB.charges,prets:DB.prets,paiements:DB.paiements,documents:DB.documents.map(function(d){return {id:d.id,batId:d.batId,logId:d.logId,nom:d.nom,cat:d.cat,date:d.date,notes:d.notes};}),messages:DB.messages,settings:DB.settings,travaux:DB.travaux,taches:DB.taches,notes:DB.notes};var json=JSON.stringify(d,null,2);try{var a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(json);a.download='immogest_backup_'+new Date().toISOString().slice(0,10)+'.json';a.click();}catch(e){}document.getElementById('export-ta').value=json;oM('m-export-view');}
-function importData(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(ev){try{var d=JSON.parse(ev.target.result);['scis','batiments','logements','locataires','charges','prets','paiements','documents','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});persist();syncPush();buildSidebar();gPage('loyers');toast('Données importées et synchronisées ✓');}catch(err){toast('Fichier JSON invalide',true);}};r.readAsText(f);}
+function importData(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=async function(ev){try{var d=JSON.parse(ev.target.result);['scis','batiments','logements','locataires','charges','prets','paiements','documents','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});persist();buildSidebar();gPage('loyers');toast('Données importées — synchronisation en cours...');await syncPush();toast(SYNC.status==='ok'?'Synchronisé avec le cloud ✓':'⚠️ Échec de synchronisation — vérifiez la connexion',SYNC.status!=='ok');}catch(err){toast('Fichier JSON invalide',true);}};r.readAsText(f);}
 
 // ═══ INIT ═══
 loadSecurity();loadSync();loadTheme();
