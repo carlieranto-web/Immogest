@@ -738,12 +738,13 @@ function rDash(){
   var ch=DB.batiments.reduce(function(a,b){return a+gBatChAn(b.id);},0);
   var patr=DB.batiments.reduce(function(a,b){return a+(b.valeurMarche||b.prixAcq);},0);
   var imp=al.filter(function(l){return l.statut==='Impayé'||l.statut==='Retard loyer';}).length;
+  var vac=al.filter(function(l){return l.statut==='Vacant';}).length;
   var html='<div class="st">Vue globale</div><div class="ss">'+DB.scis.length+' SCI · '+DB.batiments.length+' bâtiments · '+al.length+' logements</div>';
   var dHC=DB.batiments.reduce(function(a,b){return a+gBatLogs(b.id).reduce(function(x,l){return x+(l.statut==='Occupé'?l.loyer:0);},0);},0);
   var dHCTot=DB.batiments.reduce(function(a,b){return a+gBatLogs(b.id).reduce(function(x,l){return x+l.loyer;},0);},0);
   var dCC=DB.batiments.reduce(function(a,b){return a+gBatLogs(b.id).reduce(function(x,l){return x+(l.statut==='Occupé'?(l.loyer+(l.charges||0)):0);},0);},0);
   var dCCTot=DB.batiments.reduce(function(a,b){return a+gBatLogs(b.id).reduce(function(x,l){return x+(l.loyer+(l.charges||0));},0);},0);
-  html+='<div class="kpi-row"><div class="kpi go"><div class="kl">Patrimoine</div><div class="kv">'+fmt(patr)+'</div></div><div class="kpi gr"><div class="kl">Revenus bruts/an</div><div class="kv">'+fmt(lb)+'</div></div><div class="kpi gr"><div class="kl">Loyers HC/mois</div><div class="kv">'+fmt(dHCTot)+'</div></div><div class="kpi bl"><div class="kl">Loyers CC/mois</div><div class="kv">'+fmt(dCCTot)+'</div></div><div class="kpi bl"><div class="kl">Occupation</div><div class="kv">'+(al.length?Math.round(occ/al.length*100):0)+'%</div></div><div class="kpi '+(imp>0?'re':'gr')+'" style="cursor:'+(imp>0?'pointer':'default')+'" onclick="'+(imp>0?'showImpayes()':'')+'"><div class="kl">Impayés/Retards</div><div class="kv">'+imp+'</div>'+(imp>0?'<div class="ks">Cliquer pour détail</div>':'')+'</div><div class="kpi gr"><div class="kl">Net/an</div><div class="kv">'+fmt(lb-ch)+'</div></div></div>';
+  html+='<div class="kpi-row"><div class="kpi go"><div class="kl">Patrimoine</div><div class="kv">'+fmt(patr)+'</div></div><div class="kpi gr"><div class="kl">Revenus bruts/an</div><div class="kv">'+fmt(lb)+'</div></div><div class="kpi gr"><div class="kl">Loyers HC/mois</div><div class="kv">'+fmt(dHCTot)+'</div></div><div class="kpi bl"><div class="kl">Loyers CC/mois</div><div class="kv">'+fmt(dCCTot)+'</div></div><div class="kpi bl"><div class="kl">Occupation</div><div class="kv">'+(al.length?Math.round(occ/al.length*100):0)+'%</div></div><div class="kpi '+(vac>0?'or':'gr')+'" style="cursor:'+(vac>0?'pointer':'default')+'" onclick="'+(vac>0?'showVacants()':'')+'"><div class="kl">Lots vacants</div><div class="kv">'+vac+'</div>'+(vac>0?'<div class="ks">Cliquer pour détail</div>':'')+'</div><div class="kpi '+(imp>0?'re':'gr')+'" style="cursor:'+(imp>0?'pointer':'default')+'" onclick="'+(imp>0?'showImpayes()':'')+'"><div class="kl">Impayés/Retards</div><div class="kv">'+imp+'</div>'+(imp>0?'<div class="ks">Cliquer pour détail</div>':'')+'</div><div class="kpi gr"><div class="kl">Net/an</div><div class="kv">'+fmt(lb-ch)+'</div></div></div>';
   if(!DB.scis.length){html+='<div class="alert ai">Aucune donnée. Connectez votre JSONBin dans Paramètres ou importez vos données.</div>';}
   else{
     html+='<div class="g2"><div>';
@@ -793,6 +794,36 @@ function showImpayes(){
     if(lg)html+='<span style="font-size:.75rem;color:var(--text2);align-self:center;">'+fmt(lg.loyer+lg.charges)+' CC</span>';
     html+='</div></div>';
   });
+  html+='</div></div></div>';
+  var el=document.createElement('div');el.innerHTML=html;document.body.appendChild(el.firstChild);
+}
+
+function showVacants(){
+  var vac=DB.logements.filter(function(l){return l.statut==='Vacant';});
+  var html='';
+  html+='<div style="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2000;display:flex;align-items:center;justify-content:center;" id="vac-overlay">';
+  html+='<div style="background:var(--s1);border:1px solid var(--border2);border-radius:14px;width:94%;max-width:620px;max-height:85vh;overflow-y:auto;">';
+  html+='<div style="padding:14px 17px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">';
+  html+='<h3 style="font-size:1.1rem;">🏠 Lots vacants</h3>';
+  html+='<button onclick="document.getElementById(\'vac-overlay\').remove()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:1.2rem;">×</button></div>';
+  html+='<div style="padding:14px;">';
+  if(!vac.length){html+='<div style="text-align:center;color:var(--text3);padding:20px;">Aucun lot vacant</div>';}
+  else{
+    var totLoyer=vac.reduce(function(a,l){return a+(l.loyer||0);},0);
+    html+='<div class="alert ap" style="margin-bottom:11px;">'+vac.length+' lot'+(vac.length>1?'s':'')+' vacant'+(vac.length>1?'s':'')+' · manque à gagner : '+fmt(totLoyer)+'/mois HC</div>';
+    vac.forEach(function(lg){
+      var b=DB.batiments.find(function(x){return x.id===lg.batId;});
+      html+='<div style="background:var(--s2);border-radius:9px;padding:12px 14px;margin-bottom:9px;border-left:3px solid var(--orange);">';
+      html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
+      html+='<div><strong style="font-size:.85rem;">'+(b?b.nom:'—')+' · '+lg.ref+'</strong>';
+      html+='<div style="font-size:.7rem;color:var(--text3);">'+lg.type+' · '+lg.surface+' m² · Loyer visé '+fmt(lg.loyer)+'</div></div>';
+      html+='<span class="badge bo">Vacant</span></div>';
+      html+='<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+      html+='<button class="btn btn-g btn-sm" onclick="document.getElementById(\'vac-overlay\').remove();goBat(\''+lg.batId+'\')">🏠 Voir bâtiment</button>';
+      html+='<button class="btn btn-p btn-sm" onclick="document.getElementById(\'vac-overlay\').remove();openAddLoc(\''+lg.id+'\')">+ Locataire</button>';
+      html+='</div></div>';
+    });
+  }
   html+='</div></div></div>';
   var el=document.createElement('div');el.innerHTML=html;document.body.appendChild(el.firstChild);
 }
