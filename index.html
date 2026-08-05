@@ -662,6 +662,7 @@ function rLoyers(){
     html+='<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;min-width:150px;">';
     if(r.status!=='paid'&&r.status!=='vacant')html+='<button class="btn btn-sm btn-gr" onclick="quickPay(\''+r.l.id+'\',\''+ms+'\')">✓ Encaisser</button>';
     if(r.loc&&r.status!=='vacant')html+='<button class="btn btn-sm btn-g" onclick="openVersModal(\''+r.l.id+'\',\''+ms+'\')">💶</button>';
+    if(r.status==='paid'||r.status==='partial')html+='<button class="btn btn-sm btn-r" onclick="annulerPaiement(\''+r.l.id+'\',\''+ms+'\')">↩ Annuler</button>';
     if(r.loc&&(r.status==='unpaid'||r.status==='late'))html+='<button class="btn btn-sm btn-r" onclick="cRelance(\''+r.loc.id+'\')">✉</button>';
     html+='</div></div>';
       });
@@ -682,6 +683,20 @@ function quickPay(logId,mois){
   rLoyers();
   if(mEl){mEl.scrollTop=sTop;requestAnimationFrame(function(){mEl.scrollTop=sTop;});}
   toast('Loyer encaissé ✓');
+}
+function annulerPaiement(logId,mois){
+  var p=gPai(logId,mois);
+  if(!p.montant||p.montant<=0){toast('Rien à annuler');return;}
+  if(!confirm('Annuler l\'encaissement de ce loyer pour '+mois+' ? Tous les versements enregistrés pour ce mois seront supprimés.'))return;
+  p.versements=[];
+  recalcPai(p);
+  var loc=gLogLoc(logId);
+  if(loc)loc.statutPaiement='Retard';
+  persist();updateNB();
+  var mEl=document.querySelector('.main'),sTop=mEl?mEl.scrollTop:0;
+  if(DB._cv.type==='bat')rBat(DB._cv.id);else if(DB._cv.id==='loyers')rLoyers();else if(DB._cv.type==='loc')rLocDetail(DB._cv.id);
+  if(mEl){mEl.scrollTop=sTop;requestAnimationFrame(function(){mEl.scrollTop=sTop;});}
+  toast('Encaissement annulé');
 }
 function gPai(logId,mois){var p=DB.paiements.find(function(x){return x.logId===logId&&x.mois===mois;});if(!p){p={id:'pa'+uid(),logId:logId,mois:mois,montant:0,date:'',mode:'Virement',statut:'En attente',versements:[]};DB.paiements.unshift(p);}if(!p.versements)p.versements=[];return p;}
 function recalcPai(p){var l=gLog(p.logId);var due=l?(l.loyer||0)+(l.charges||0):0;p.montant=(p.versements||[]).reduce(function(a,v){return a+(+v.montant||0);},0);if(p.versements&&p.versements.length)p.date=p.versements[p.versements.length-1].date;if(p.montant<=0)p.statut='En attente';else if(p.montant>=due)p.statut='Payé';else p.statut='Partiel';}
@@ -705,7 +720,7 @@ function renderVersModal(){
     html+='</div>';
   }
   html+='<div class=\"fg2\"><div class=\"fg\"><label>Montant (€)</label><input type=\"number\" id=\"vers-montant\" value=\"'+(reste>0?reste:'')+'\"></div><div class=\"fg\"><label>Date</label><input type=\"date\" id=\"vers-date\" value=\"'+NOW.toISOString().substr(0,10)+'\"></div><div class=\"fg\"><label>Mode</label><select id=\"vers-mode\"><option>Virement</option><option>Chèque</option><option>Espèces</option><option>Prélèvement</option></select></div><div class=\"fg\"><label>Type</label><select id=\"vers-type\"><option value=\"Locataire\">Locataire</option>'+(loc&&loc.caf?'<option value=\"CAF\">CAF</option>':'')+'</select></div></div>';
-  html+='<div class=\"mf\" style=\"padding-top:12px;\"><button class=\"btn btn-g\" onclick=\"cM(\'m-vers\')\">Fermer</button><button class=\"btn btn-p\" onclick=\"addVersement()\">+ Ajouter ce versement</button></div>';
+  html+='<div class=\"mf\" style=\"padding-top:12px;\">'+(recu>0?'<button class=\"btn btn-r\" onclick=\"annulerPaiement(\''+logId+'\',\''+mois+'\');cM(\'m-vers\')\">↩ Tout annuler</button>':'')+'<button class=\"btn btn-g\" onclick=\"cM(\'m-vers\')\">Fermer</button><button class=\"btn btn-p\" onclick=\"addVersement()\">+ Ajouter ce versement</button></div>';
   document.getElementById('vers-body').innerHTML=html;
 }
 function addVersement(){
