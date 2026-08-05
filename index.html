@@ -755,6 +755,21 @@ function rDash(){
         ['Bâtiments:'+bats.length,'Logements:'+logs.length,'Revenus/an:'+fmt(br),'Net/an:'+fmt(br-chs)].map(function(x){var p=x.split(':');return '<div class="ss2"><div class="l">'+p[0]+'</div><div class="v">'+p[1]+'</div></div>';}).join('')+
         '</div>'+( im>0?bdg('⚠ '+im+' impayé'+(im>1?'s':''),'br'):bdg('✓ OK','bg'))+'</div></div>';
     }).join('');
+    var batStats=DB.batiments.map(function(bat){
+      var logs2=gBatLogs(bat.id);
+      var occ2=logs2.filter(function(l){return l.statut==='Occupé';}).length;
+      var taux2=logs2.length?Math.round(occ2/logs2.length*100):0;
+      return {bat:bat,occ:occ2,total:logs2.length,taux:taux2};
+    }).sort(function(a,b){return a.taux-b.taux;});
+    html+='<div class="card"><div class="ch"><h3>Taux de remplissage par bâtiment</h3></div><div style="padding:12px;">';
+    if(!batStats.length){html+='<div style="text-align:center;color:var(--text3);padding:14px;font-size:.77rem;">Aucun bâtiment</div>';}
+    else batStats.forEach(function(x){
+      var color=x.taux>=90?'var(--green)':x.taux>=70?'var(--gold)':'var(--red)';
+      html+='<div style="margin-bottom:11px;cursor:pointer;" onclick="goBat(\''+x.bat.id+'\')">';
+      html+='<div style="display:flex;justify-content:space-between;align-items:center;font-size:.77rem;margin-bottom:4px;"><span>'+x.bat.nom+'</span><span style="color:'+color+';font-weight:600;">'+x.taux+'% ('+x.occ+'/'+x.total+')</span></div>';
+      html+='<div class="pb"><div class="pf" style="width:'+x.taux+'%;background:'+color+';"></div></div></div>';
+    });
+    html+='</div></div>';
     html+='</div><div class="card"><div class="ch"><h3>Tous les locataires</h3></div><div style="max-height:480px;overflow-y:auto;">';
     if(!DB.locataires.length)html+='<div style="padding:14px;text-align:center;color:var(--text3);font-size:.77rem;">Aucun locataire</div>';
     else DB.locataires.forEach(function(loc){var l=gLog(loc.logId),b=l?gBat(l.batId):null;
