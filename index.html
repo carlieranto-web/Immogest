@@ -662,7 +662,7 @@ function rLoyers(){
     html+='<div style="min-width:80px;text-align:center">'+sBdg(r.status==='paid'?'Payé':r.status==='partial'?'Partiel':r.status==='unpaid'?'Impayé':r.status==='vacant'?'Vacant':'En attente')+'</div>';
     html+='<div class="lr-act" style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;min-width:150px;">';
     if(r.status!=='paid'&&r.status!=='vacant')html+='<button class="btn btn-sm btn-gr" onclick="quickPay(\''+r.l.id+'\',\''+ms+'\')">✓ Encaisser</button>';
-    if(r.loc&&r.status!=='vacant')html+='<button class="btn btn-sm btn-g" onclick="openVersModal(\''+r.l.id+'\',\''+ms+'\')">💶</button>';
+    if(r.loc&&r.status!=='vacant')html+='<button class="btn btn-sm btn-g" onclick="openVersModal(\''+r.l.id+'\',\''+ms+'\')">💶 Partiel/CAF</button>';
     if(r.status==='paid'||r.status==='partial')html+='<button class="btn btn-sm btn-r" onclick="annulerPaiement(\''+r.l.id+'\',\''+ms+'\')">↩ Annuler</button>';
     if(r.loc&&(r.status==='unpaid'||r.status==='late'))html+='<button class="btn btn-sm btn-r" onclick="cRelance(\''+r.loc.id+'\')">✉</button>';
     html+='</div></div>';
@@ -720,7 +720,7 @@ function renderVersModal(){
     p.versements.forEach(function(v,i){html+='<div style=\"display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(30,45,61,.4);font-size:.78rem;\"><span>'+(v.date||'—')+' · '+v.mode+' · '+(v.type==='CAF'?'<span style=\"color:var(--purple)\">CAF</span>':'Locataire')+'</span><span style=\"display:flex;align-items:center;gap:6px;\"><strong>'+fmt(v.montant)+'</strong><button class=\"btn btn-sm btn-da\" style=\"padding:2px 5px\" onclick=\"delVersement('+i+')\">🗑</button></span></div>';});
     html+='</div>';
   }
-  html+='<div class=\"fg2\"><div class=\"fg\"><label>Montant (€)</label><input type=\"number\" id=\"vers-montant\" value=\"'+(reste>0?reste:'')+'\"></div><div class=\"fg\"><label>Date</label><input type=\"date\" id=\"vers-date\" value=\"'+NOW.toISOString().substr(0,10)+'\"></div><div class=\"fg\"><label>Mode</label><select id=\"vers-mode\"><option>Virement</option><option>Chèque</option><option>Espèces</option><option>Prélèvement</option></select></div><div class=\"fg\"><label>Type</label><select id=\"vers-type\"><option value=\"Locataire\">Locataire</option>'+(loc&&loc.caf?'<option value=\"CAF\">CAF</option>':'')+'</select></div></div>';
+  html+='<div class=\"fg2\"><div class=\"fg\"><label>Montant (€)</label><input type=\"number\" id=\"vers-montant\" value=\"'+(reste>0?reste:'')+'\"></div><div class=\"fg\"><label>Date</label><input type=\"date\" id=\"vers-date\" value=\"'+NOW.toISOString().substr(0,10)+'\"></div><div class=\"fg\"><label>Mode</label><select id=\"vers-mode\"><option>Virement</option><option>Chèque</option><option>Espèces</option><option>Prélèvement</option></select></div><div class=\"fg\"><label>Type</label><select id=\"vers-type\"><option value=\"Locataire\">Locataire</option><option value=\"CAF\">CAF</option></select></div></div>';
   html+='<div class=\"mf\" style=\"padding-top:12px;\">'+(recu>0?'<button class=\"btn btn-r\" onclick=\"annulerPaiement(\''+logId+'\',\''+mois+'\');cM(\'m-vers\')\">↩ Tout annuler</button>':'')+'<button class=\"btn btn-g\" onclick=\"cM(\'m-vers\')\">Fermer</button><button class=\"btn btn-p\" onclick=\"addVersement()\">+ Ajouter ce versement</button></div>';
   document.getElementById('vers-body').innerHTML=html;
 }
