@@ -171,7 +171,8 @@ textarea{resize:vertical;min-height:60px;}
 .toast{position:fixed;bottom:22px;right:22px;background:var(--green);color:#fff;border-radius:10px;padding:9px 15px;font-size:.79rem;font-weight:500;z-index:9000;animation:tf .3s ease;pointer-events:none;}
 .toast.err{background:var(--red);}
 @keyframes tf{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
-.lr{display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid rgba(30,45,61,.4);transition:background .15s;}
+.lr{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid rgba(30,45,61,.4);transition:background .15s;}
+@media (max-width:700px){.lr-act{width:100%;justify-content:flex-start!important;margin-top:2px;}}
 .lr:hover{background:var(--s2);}
 .lr.paid{border-left:3px solid var(--green);}
 .lr.late{border-left:3px solid var(--orange);}.lr.partial{border-left:3px solid var(--gold);}
@@ -659,7 +660,7 @@ function rLoyers(){
     html+='<div style="flex:1"><div style="font-size:.78rem">'+(r.loc?'<span class="ll" onclick="goLoc(\''+r.loc.id+'\')">'+r.loc.prenom+' '+r.loc.nom+'</span>':'<span style="color:var(--text3)">Vacant</span>')+'</div>'+(r.l.loyer>0?'<div style="font-size:.67rem;color:var(--text3);display:flex;gap:8px;"><span>'+fmt(r.l.loyer)+' HC</span><span style="color:var(--text3)">+'+fmt(r.l.charges)+' ch.</span><span style="color:var(--accent2);font-weight:600;">= '+fmt(r.l.loyer+r.l.charges)+' CC</span>'+(r.loc&&r.loc.caf?'<span style="color:var(--purple);font-weight:600;">· CAF '+fmt(r.loc.montantCaf||0)+'</span>':'')+'</div>':'')+'</div>';
     html+='<div style="min-width:80px;text-align:right"><strong style="font-size:.78rem;color:'+sc+'">'+(r.pai&&r.pai.montant>0?fmt(r.pai.montant):r.status!=='vacant'?'—':'Vacant')+'</strong></div>';
     html+='<div style="min-width:80px;text-align:center">'+sBdg(r.status==='paid'?'Payé':r.status==='partial'?'Partiel':r.status==='unpaid'?'Impayé':r.status==='vacant'?'Vacant':'En attente')+'</div>';
-    html+='<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;min-width:150px;">';
+    html+='<div class="lr-act" style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;min-width:150px;">';
     if(r.status!=='paid'&&r.status!=='vacant')html+='<button class="btn btn-sm btn-gr" onclick="quickPay(\''+r.l.id+'\',\''+ms+'\')">✓ Encaisser</button>';
     if(r.loc&&r.status!=='vacant')html+='<button class="btn btn-sm btn-g" onclick="openVersModal(\''+r.l.id+'\',\''+ms+'\')">💶</button>';
     if(r.status==='paid'||r.status==='partial')html+='<button class="btn btn-sm btn-r" onclick="annulerPaiement(\''+r.l.id+'\',\''+ms+'\')">↩ Annuler</button>';
@@ -1312,18 +1313,20 @@ function saveMgrSettings(){DB.settings.managerName=gv('set-mgr-nom');DB.settings
 function saveSyncSettings(){SYNC.apiKey=gv('sync-api-key').trim();SYNC.binId=gv('sync-bin-id').trim();saveSync();if(SYNC.apiKey&&SYNC.binId)syncPull();else{setSS('idle');toast('Sync désactivée');}}
 function createBin(){var key=gv('sync-api-key').trim();if(!key){toast('Entrez votre API Key',true);return;}SYNC.apiKey=key;setSS('syncing');var data={scis:DB.scis,batiments:DB.batiments,logements:DB.logements,locataires:DB.locataires,charges:DB.charges,prets:DB.prets,paiements:DB.paiements,messages:DB.messages,settings:DB.settings,travaux:DB.travaux,taches:DB.taches,notes:DB.notes};fetch('https://api.jsonbin.io/v3/b',{method:'POST',headers:{'Content-Type':'application/json','X-Master-Key':SYNC.apiKey,'X-Bin-Name':'ImmoGest','X-Bin-Private':'true'},body:JSON.stringify(data)}).then(function(r){return r.ok?r.json():Promise.reject('Erreur '+r.status);}).then(function(d){SYNC.binId=d.metadata.id;var el=document.getElementById('sync-bin-id');if(el)el.value=SYNC.binId;saveSync();setSS('ok');toast('Bin créé ✓ — copiez le Bin ID sur vos autres appareils');}).catch(function(e){setSS('error');toast('Erreur — vérifiez votre API Key',true);});}
 function exportData(){var d={scis:DB.scis,batiments:DB.batiments,logements:DB.logements,locataires:DB.locataires,charges:DB.charges,prets:DB.prets,paiements:DB.paiements,documents:DB.documents.map(function(d){return {id:d.id,batId:d.batId,logId:d.logId,nom:d.nom,cat:d.cat,date:d.date,notes:d.notes};}),messages:DB.messages,settings:DB.settings,travaux:DB.travaux,taches:DB.taches,notes:DB.notes};var json=JSON.stringify(d,null,2);try{var a=document.createElement('a');a.href='data:application/json,'+encodeURIComponent(json);a.download='immogest_backup_'+new Date().toISOString().slice(0,10)+'.json';a.click();}catch(e){}document.getElementById('export-ta').value=json;oM('m-export-view');}
-function importData(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=async function(ev){try{var d=JSON.parse(ev.target.result);['scis','batiments','logements','locataires','charges','prets','paiements','documents','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});persist();buildSidebar();gPage('loyers');toast('Données importées — synchronisation en cours...');await syncPush();toast(SYNC.status==='ok'?'Synchronisé avec le cloud ✓':'⚠️ '+(SYNC.lastError||'Échec de synchronisation'),SYNC.status!=='ok');}catch(err){toast('Fichier JSON invalide',true);}};r.readAsText(f);}
+function importData(e){var f=e.target.files[0];if(!f)return;_busyOp=true;var r=new FileReader();r.onload=async function(ev){try{var d=JSON.parse(ev.target.result);['scis','batiments','logements','locataires','charges','prets','paiements','documents','messages','settings','travaux','taches','notes'].forEach(function(k){if(d[k]!==undefined)DB[k]=d[k];});persist();buildSidebar();gPage('loyers');toast('Données importées — synchronisation en cours...');await syncPush();toast(SYNC.status==='ok'?'Synchronisé avec le cloud ✓':'⚠️ '+(SYNC.lastError||'Échec de synchronisation'),SYNC.status!=='ok');}catch(err){toast('Fichier JSON invalide',true);}finally{_busyOp=false;}};r.readAsText(f);}
 
 // ═══ INIT ═══
 loadSecurity();loadSync();loadTheme();
 var hadData=loadPersisted();
 if(!hadData)persist();
+var _busyOp=false;
 function checkFreshness(){
   fetch(location.origin+'/',{method:'HEAD',cache:'no-store'}).then(function(r){
     var v=r.headers.get('X-App-Version');
     if(!v)return;
     if(!window.APP_VERSION){window.APP_VERSION=v;return;}
     if(v!==window.APP_VERSION){
+      if(_busyOp||SYNC.status==='syncing'||_sTO){setTimeout(checkFreshness,4000);return;}
       if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(reg){reg.unregister();});});}
       if('caches' in window){caches.keys().then(function(ks){ks.forEach(function(k){caches.delete(k);});});}
       location.reload();
@@ -1334,7 +1337,7 @@ document.addEventListener('visibilitychange',function(){
   if(document.visibilityState==='visible'){
     checkFreshness();
     var appVisible=document.getElementById('app')&&document.getElementById('app').classList.contains('visible');
-    if(appVisible&&SYNC.apiKey&&SYNC.binId&&!_sTO){syncPull();}
+    if(appVisible&&SYNC.apiKey&&SYNC.binId&&!_sTO&&!_busyOp){syncPull();}
   }
 });
 window.addEventListener('pageshow',function(e){if(e.persisted){checkFreshness();}});
