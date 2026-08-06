@@ -790,7 +790,13 @@ function rDash(){
       var taux2=logs2.length?Math.round(occ2/logs2.length*100):0;
       return {bat:bat,occ:occ2,total:logs2.length,taux:taux2};
     }).sort(function(a,b){return a.taux-b.taux;});
+    var totalOccBat=batStats.reduce(function(a,x){return a+x.occ;},0),totalLots=batStats.reduce(function(a,x){return a+x.total;},0);
+    var tauxGlobal=totalLots?Math.round(totalOccBat/totalLots*100):0;
+    var colorG=tauxGlobal>=90?'var(--green)':tauxGlobal>=70?'var(--gold)':'var(--red)';
     html+='<div class="card"><div class="ch"><h3>Taux de remplissage par bâtiment</h3></div><div style="padding:12px;">';
+    html+='<div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border);">';
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;font-size:.85rem;margin-bottom:6px;"><strong>Remplissage total du parc</strong><span style="color:'+colorG+';font-weight:700;font-size:.95rem;">'+tauxGlobal+'% ('+totalOccBat+'/'+totalLots+')</span></div>';
+    html+='<div class="pb"><div class="pf" style="width:'+tauxGlobal+'%;background:'+colorG+';"></div></div></div>';
     if(!batStats.length){html+='<div style="text-align:center;color:var(--text3);padding:14px;font-size:.77rem;">Aucun bâtiment</div>';}
     else batStats.forEach(function(x){
       var color=x.taux>=90?'var(--green)':x.taux>=70?'var(--gold)':'var(--red)';
