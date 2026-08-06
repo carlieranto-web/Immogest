@@ -385,17 +385,20 @@ async function unGzB64(b64){
   var st=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
   var buf=await new Response(st).arrayBuffer();return new TextDecoder().decode(buf);
 }
-async function syncPush(){
-  if(!SYNC.apiKey||!SYNC.binId)return;setSS('syncing');SYNC.lastError='';
+async function syncPush(retry){
+  if(!SYNC.apiKey||!SYNC.binId)return;setSS('syncing');if(!retry)SYNC.lastError='';
   var data={scis:DB.scis,batiments:DB.batiments,logements:DB.logements,locataires:DB.locataires,charges:DB.charges,prets:DB.prets,paiements:DB.paiements,messages:DB.messages,settings:DB.settings,travaux:DB.travaux,taches:DB.taches,notes:DB.notes,tomb:DB._tomb};
   try{
     var json=JSON.stringify(data),body,usedGz=false;
     if(window.CompressionStream){body=JSON.stringify({gz:await gzB64(json)});usedGz=true;}else{body=json;}
     var r=await fetch('https://api.jsonbin.io/v3/b/'+SYNC.binId,{method:'PUT',headers:{'Content-Type':'application/json','X-Master-Key':SYNC.apiKey},body:body});
     if(r.ok){setSS('ok');}else{var t='';try{t=await r.text();}catch(e2){}SYNC.lastError='HTTP '+r.status+' (gz:'+usedGz+', '+body.length+' octets) — '+t.substring(0,200);setSS('error');}
-  }catch(e){SYNC.lastError='Exception: '+(e&&e.message||e);setSS('error');}
+  }catch(e){
+    if(!retry){await new Promise(function(res){setTimeout(res,1500);});return syncPush(true);}
+    SYNC.lastError='Exception: '+(e&&e.message||e)+' (souvent un souci reseau passager — reessayez)';setSS('error');
+  }
 }
-async function syncPull(){
+async function syncPull(retry){
   if(!SYNC.apiKey||!SYNC.binId)return;setSS('syncing');
   try{
     var r=await fetch('https://api.jsonbin.io/v3/b/'+SYNC.binId+'/latest',{headers:{'X-Master-Key':SYNC.apiKey,'X-Bin-Meta':'false'}});
@@ -413,7 +416,10 @@ async function syncPull(){
     if(d['notes']!==undefined&&(!DB.notes||Object.keys(DB.notes).length===0))DB.notes=d['notes'];
     persist();
     setSS('ok');toast('Données synchronisées ✓');buildSidebar();gPage('dashboard');
-  }catch(e){setSS('error');}
+  }catch(e){
+    if(!retry){await new Promise(function(res){setTimeout(res,1500);});return syncPull(true);}
+    setSS('error');
+  }
 }
 
 // ═══ SECURITY ═══
@@ -612,6 +618,7 @@ function setTba(acts){document.getElementById('tba').innerHTML=acts.map(function
 
 // ═══ PAGE: LOYERS DU MOIS ═══
 var _lM=new Date().getMonth(),_lY=new Date().getFullYear();
+var _loyersOpen={};
 function rLoyers(){
   var ms=_lY+'-'+(_lM+1<10?'0':'')+(_lM+1);
   var mLabel=new Date(_lY,_lM,1).toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
@@ -647,12 +654,17 @@ function rLoyers(){
     var batHC=batRows.filter(function(r){return r.status!=='vacant';}).reduce(function(a,r){return a+r.l.loyer;},0);
     var batCC=batRows.filter(function(r){return r.status!=='vacant';}).reduce(function(a,r){return a+(r.l.loyer+(r.l.charges||0));},0);
     var batPaid=batRows.filter(function(r){return r.status==='paid';}).length;
+    var batUnpaid=batRows.filter(function(r){return r.status==='unpaid';}).length;
+    var batLate=batRows.filter(function(r){return r.status==='late'||r.status==='partial';}).length;
     var batOcc=batRows.filter(function(r){return r.status!=='vacant';}).length;
-    html+='<div style="margin-top:14px;margin-bottom:4px;padding:8px 12px;background:var(--s2);border-radius:8px;display:flex;justify-content:space-between;align-items:center;">';
-    html+='<div><strong style="font-size:.82rem;">'+bat.nom+'</strong>';
-    html+='<span style="font-size:.67rem;color:var(--text3);margin-left:8px;">'+batPaid+'/'+batOcc+' payés</span></div>';
+    var batDot=batUnpaid>0?'var(--red)':batLate>0?'var(--orange)':(batOcc>0&&batPaid===batOcc)?'var(--green)':'var(--text3)';
+    var isOpen=!!_loyersOpen[bat.id];
+    html+='<div onclick="toggleBatLoyers(\''+bat.id+'\')" style="cursor:pointer;margin-top:14px;margin-bottom:4px;padding:8px 12px;background:var(--s2);border-radius:8px;display:flex;justify-content:space-between;align-items:center;border-left:4px solid '+batDot+';">';
+    html+='<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:.7rem;color:var(--text3);transform:rotate('+(isOpen?90:0)+'deg);display:inline-block;transition:transform .15s;">▶</span><div><strong style="font-size:.82rem;">'+bat.nom+'</strong>';
+    html+='<span style="font-size:.67rem;color:var(--text3);margin-left:8px;">'+batPaid+'/'+batOcc+' payés'+(batUnpaid>0?' · '+batUnpaid+' impayé(s)':'')+'</span></div></div>';
     html+='<div style="font-size:.7rem;color:var(--text3);">HC : <strong style="color:var(--text2)">'+fmt(batHC)+'</strong> &middot; CC : <strong style="color:var(--accent2)">'+fmt(batCC)+'</strong></div>';
     html+='</div>';
+    if(!isOpen)return;
     batRows.forEach(function(r){
     var sc=r.status==='paid'?'var(--green)':r.status==='unpaid'?'var(--red)':'var(--orange)';
     html+='<div class="lr '+r.status+'">';
@@ -670,6 +682,7 @@ function rLoyers(){
   });}
   html+='</div>'; document.getElementById('ca').innerHTML=html;
 }
+function toggleBatLoyers(batId){_loyersOpen[batId]=!_loyersOpen[batId];rLoyers();}
 function quickPay(logId,mois){
   var l=gLog(logId),loc=gLogLoc(logId);
   var p=gPai(logId,mois);
