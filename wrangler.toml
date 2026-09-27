@@ -2,11 +2,6 @@ name = "immogest"
 main = "worker.js"
 compatibility_date = "2025-06-01"
 
-# Coffre de données sécurisé (Durable Object SQLite, inclus dans l'offre gratuite Cloudflare)
 [[durable_objects.bindings]]
 name = "STORE"
 class_name = "Store"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["Store"]
