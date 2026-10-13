@@ -90,6 +90,13 @@ test('fusion : archiver un locataire ne supprime pas sa fiche archivée', () => 
   assert.equal(out.locataires.length, 0); assert.equal(out.anciens.length, 1);
 });
 
+test('cash-flow brut = loyers − crédit, cash-flow = brut − PNO − TF − gestion', () => {
+  const c = projCalc(charbo);
+  near(c.cash_flow_brut_an, c.loyers_annuels - c.annuite, 1e-9);
+  near(c.cash_flow_brut_mois, c.cash_flow_brut_an / 12, 1e-9);
+  near(c.cash_flow_an, c.cash_flow_brut_an - c.pno_an - c.tf_an - c.gestion_an, 1e-9);
+});
+
 // ── Cohérence appli / serveur : même calcul des deux côtés
 test('le calcul du simulateur est identique dans l\'appli et sur le serveur', () => {
   const html = Buffer.from(src.match(/const HTML_B64 = '([A-Za-z0-9+/=]+)'/)[1], 'base64').toString('utf8');
