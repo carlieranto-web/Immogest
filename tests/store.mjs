@@ -57,5 +57,19 @@ await test('envoi par e-mail : pièce jointe ZIP envoyée à Brevo', async () =>
   assert.equal(sent.body.to[0].email, 'moi@x.fr'); assert.match(sent.body.attachment[0].name, /\.zip$/);
   const z = Buffer.from(sent.body.attachment[0].content,'base64'); assert.equal(z.readUInt32LE(0), 0x04034b50);
 });
+await test('documents et photos : envoi progressif par lots, sans renvoyer deux fois', async () => {
+  const s = store(); await s.putData({batiments:[{id:'b1',nom:'Saint-Brieuc'}],logements:[{id:'l1',batId:'b1',ref:'Apt 4'}]});
+  await s.storage.put('mail:cfg',{apiKey:'k',senderEmail:'a@b.fr'});
+  const put = async (id,size,name) => { const u=new Uint8Array(size).fill(7); await s.storage.put('fc:'+id+':0',u.buffer); await s.storage.put('fm:'+id,{id,name,size,chunks:1,cat:'Bail',batId:'b1',logId:'l1',created:size}); };
+  await put('f1',3e6,'bail.pdf'); await put('f2',3e6,'bail.pdf'); await put('f3',3e6,'edl.pdf'); await put('f4',8e6,'gros.pdf');
+  const mails=[]; const of=globalThis.fetch; globalThis.fetch=async(u,o)=>{mails.push(JSON.parse(o.body));return new Response('{}',{status:201});};
+  try {
+    const r1 = await s.mailFiles(1); assert.equal(r1.ok,true); assert.equal(r1.fichiers,2); assert.equal(r1.restants,1); assert.equal(r1.trop_gros.length,1);
+    const r2 = await s.mailFiles(5); assert.equal(r2.fichiers,1); assert.equal(r2.restants,0);
+    const r3 = await s.mailFiles(5); assert.equal(r3.emails,0);
+  } finally { globalThis.fetch=of; }
+  assert.equal(mails.length,2);
+  const z=Buffer.from(mails[0].attachment[0].content,'base64'); fs.writeFileSync(new URL('./.t2.zip', import.meta.url), z);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);

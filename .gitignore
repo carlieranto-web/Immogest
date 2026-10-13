@@ -1,3 +1,4 @@
 tests/.worker-test.mjs
 tests/.t.zip
 node_modules/
+tests/.t2.zip
