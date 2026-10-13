@@ -1,0 +1,61 @@
+// Tests du coffre serveur (Durable Object) avec un stockage simulé en mémoire.
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+let src = fs.readFileSync(new URL('../worker.js', import.meta.url), 'utf8')
+  .replace(/^import PDFJS_MAIN from .*$/m, "const PDFJS_MAIN='';").replace(/^import PDFJS_WORKER from .*$/m, "const PDFJS_WORKER='';");
+src += '\nexport {zipOne,crc32,mergeDB};';
+const tmp = new URL('./.worker-test.mjs', import.meta.url);
+fs.writeFileSync(tmp, src);
+const W = await import(tmp.href + '?t=' + Date.now());
+fs.unlinkSync(tmp);
+
+class Mem { constructor(){this.m=new Map();}
+  async get(k){return this.m.get(k);} async put(k,v){if(typeof k==='object'){for(const x in k)this.m.set(x,k[x]);}else this.m.set(k,v);}
+  async delete(k){(Array.isArray(k)?k:[k]).forEach(x=>this.m.delete(x));}
+  async list(o){const r=new Map();[...this.m.keys()].sort().forEach(k=>{if(!o||!o.prefix||k.startsWith(o.prefix))r.set(k,this.m.get(k));});return r;} }
+const store = () => new W.Store({storage:new Mem(),waitUntil(){}}, {});
+
+let failed=0,passed=0;
+async function test(n,f){try{await f();passed++;console.log('✓ '+n);}catch(e){failed++;console.error('✗ '+n+'\n   '+e.message);}}
+
+await test('CRC32 conforme (valeur de référence)', () => { assert.equal(W.crc32(new TextEncoder().encode('123456789')), 0xCBF43926); });
+await test('ZIP lisible : signature et contenu décompressé identique', async () => {
+  const data = new TextEncoder().encode(JSON.stringify({a:'é'.repeat(5000)}));
+  const z = await W.zipOne('x.json', data);
+  assert.equal(new DataView(z.buffer).getUint32(0,true), 0x04034b50);
+  fs.writeFileSync(new URL('./.t.zip', import.meta.url), z);
+});
+await test('sauvegarde et relecture des données (gzip découpé)', async () => {
+  const s = store(); const d = {batiments:[{id:'b1',nom:'A',_ts:1}],logements:[],locataires:[]};
+  await s.putData(d); assert.deepEqual(await s.getData(), d);
+});
+await test('restauration : remplace, garde la version d\'avant, et s\'impose aux appareils', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Avant',_ts:5}],logements:[{id:'l1',_ts:5},{id:'l2',_ts:5}],locataires:[],projets:[{id:'pjX',_ts:5}]});
+  const r = await s.restoreData({batiments:[{id:'b1',nom:'Sauvegarde',_ts:1}],logements:[{id:'l1',_ts:1}],locataires:[]});
+  assert.equal(r.ok, true);
+  const d = await s.getData();
+  assert.equal(d.batiments[0].nom, 'Sauvegarde'); assert.equal(d.logements.length, 1);
+  assert.ok(d.tomb.l2 && d.tomb.pjX, 'les éléments absents de la sauvegarde sont marqués supprimés');
+  assert.ok([...(await s.storage.list({prefix:'bkpre:'})).keys()].length === 1, 'version d\'avant conservée');
+  // un appareil resté sur l'ancienne version renvoie ses données : la restauration doit gagner
+  const merged = W.mergeDB(d, {batiments:[{id:'b1',nom:'Avant',_ts:5}],logements:[{id:'l1',_ts:5},{id:'l2',_ts:5}],tomb:{}});
+  assert.equal(merged.batiments[0].nom, 'Sauvegarde'); assert.equal(merged.logements.length, 1);
+});
+await test('restauration : refuse un fichier qui n\'est pas une sauvegarde', async () => {
+  await assert.rejects(store().restoreData({foo:1}));
+});
+await test('envoi par e-mail : erreur claire si l\'envoi n\'est pas configuré', async () => {
+  const s = store(); await s.putData({batiments:[],logements:[]});
+  const r = await s.mailBackup('manuel'); assert.equal(r.ok, false); assert.match(r.error, /non configuré/);
+});
+await test('envoi par e-mail : pièce jointe ZIP envoyée à Brevo', async () => {
+  const s = store(); await s.putData({batiments:[{id:'b1'}],logements:[]});
+  await s.storage.put('mail:cfg',{apiKey:'k',senderEmail:'a@b.fr',replyTo:'moi@x.fr'});
+  let sent; const of = globalThis.fetch; globalThis.fetch = async (u,o) => {sent={u,body:JSON.parse(o.body)};return new Response('{"messageId":"1"}',{status:201});};
+  try { const r = await s.mailBackup('auto'); assert.equal(r.ok, true); } finally { globalThis.fetch = of; }
+  assert.equal(sent.body.to[0].email, 'moi@x.fr'); assert.match(sent.body.attachment[0].name, /\.zip$/);
+  const z = Buffer.from(sent.body.attachment[0].content,'base64'); assert.equal(z.readUInt32LE(0), 0x04034b50);
+});
+console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
+process.exit(failed?1:0);

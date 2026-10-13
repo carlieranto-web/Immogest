@@ -5,3 +5,7 @@ compatibility_date = "2025-06-01"
 [[durable_objects.bindings]]
 name = "STORE"
 class_name = "Store"
+
+# Copie des données envoyée par e-mail chaque lundi à 5 h UTC (7 h à Paris l'été)
+[triggers]
+crons = ["0 5 * * 1"]
