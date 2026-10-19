@@ -155,6 +155,15 @@ test('rapport du mois : bien par bien, total = somme, cumul depuis janvier et an
 test('rapport : cumul depuis janvier repart à zéro chaque année', () => {
   const R = capCtx.capReport(K(2027, 1)); near(R.batiments.find(b => b.nom === 'Lannion').capAn, 503.5);
 });
+test('différé avec intérêts reportés : la hausse de dette est séparée, jamais comptée en remboursement', () => {
+  const p = { hasSchedule: true, capital: 702101.41, schedule: [
+    { date: '2026-08-05', principal: 0, interest: 2369.59, total: 126.39, balance: 705951.18 },
+    { date: '2026-09-05', principal: 0, interest: 2369.59, total: 126.39, balance: 708320.77 },
+    { date: '2026-10-05', principal: 0, interest: 2369.59, total: 126.39, balance: 710690.36 }] };
+  const s = capCtx.capSeries(p);
+  near(s.m[K(2026, 9)].cap, 0); near(s.m[K(2026, 9)].capi, 2369.59); near(s.m[K(2026, 10)].capi, 2369.59);
+  near(capCtx.capCrd(s, K(2026, 1)), 705951.18);
+});
 test('le calcul du capital remboursé est identique dans l\'appli et sur le serveur', () => {
   const html = Buffer.from(src.match(/const HTML_B64 = '([A-Za-z0-9+/=]+)'/)[1], 'base64').toString('utf8');
   ['capSeries', 'capCrd', 'capReport'].forEach(n => {
