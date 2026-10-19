@@ -109,5 +109,59 @@ test('la version du cache est identique dans le worker et le service worker', ()
   assert.ok(sw.includes(v), 'service worker sans ' + v);
 });
 
+// ── Capital remboursé (échéanciers des prêts)
+const capCtx = vm.createContext({});
+vm.runInContext([extract('capSeries'), extract('capCrd'), extract('capReport'),
+  'var DB={batiments:[],prets:[],scis:[]};function gSCI(id){return DB.scis.find(function(s){return s.id===id;});}',
+  'function gBatPrets(bid){var b=DB.batiments.find(function(x){return x.id===bid;});return DB.prets.filter(function(p){return p.batId===bid||(b&&p.batiment===b.nom);});}',
+  'this.capSeries=capSeries;this.capCrd=capCrd;this.capReport=capReport;this.setDB=function(d){DB=d;};'].join('\n'), capCtx);
+const K = (y, m) => y * 12 + m - 1;
+const sched = [ // échéancier bancaire : 2 mois de différé (intérêts seuls) puis amortissement
+  { date: '2026-09-05', principal: 0, interest: 300, total: 300, balance: 100000 },
+  { date: '2026-10-05', principal: 0, interest: 300, total: 300, balance: 100000 },
+  { date: '2026-11-05', principal: 500.5, interest: 300, total: 800.5, balance: 99499.5 },
+  { date: '2026-12-05', principal: 502, interest: 298.5, total: 800.5, balance: 98997.5 },
+  { date: '2027-01-05', principal: 503.5, interest: 297, total: 800.5, balance: 98494 }];
+const dbCap = { scis: [{ id: 's1', nom: 'SCI A' }],
+  batiments: [{ id: 'b1', sciId: 's1', nom: 'Lannion' }, { id: 'b2', sciId: 's1', nom: 'La Roche' }, { id: 'b3', sciId: 's1', nom: 'Sans prêt', creditRestant: 50000 }, { id: 'b4', sciId: 's1', nom: 'Payé cash' }],
+  prets: [{ id: 'p1', batId: 'b1', hasSchedule: true, capital: 100000, schedule: sched },
+          { id: 'p2', batiment: 'La Roche', capital: 12000, taux: 0, duree: 12, debut: '2026-01-15' }] };
+capCtx.setDB(dbCap);
+test('capital remboursé : pris dans l\'échéancier de la banque, différé à zéro', () => {
+  const s = capCtx.capSeries(dbCap.prets[0]);
+  assert.equal(s.m[K(2026, 10)].cap, 0); near(s.m[K(2026, 11)].cap, 500.5); near(s.m[K(2026, 12)].int, 298.5);
+});
+test('capital remboursé : déduit du capital restant dû si la colonne manque', () => {
+  const p = { hasSchedule: true, capital: 100000, schedule: sched.map(r => ({ date: r.date, total: r.total, balance: r.balance })) };
+  const s = capCtx.capSeries(p);
+  near(s.m[K(2026, 9)].cap, 0); near(s.m[K(2026, 11)].cap, 500.5); near(s.m[K(2027, 1)].cap, 503.5);
+});
+test('prêt sans échéancier : la somme du capital remboursé redonne le capital emprunté', () => {
+  const s = capCtx.capSeries({ capital: 150000, taux: 3.5, duree: 240, debut: '2026-01-15' });
+  near(s.keys.reduce((a, k) => a + s.m[k].cap, 0), 150000, 1e-6); near(s.m[s.keys[239]].crd, 0, 1e-6);
+});
+test('capital restant dû avant, pendant et après le prêt', () => {
+  const s = capCtx.capSeries(dbCap.prets[0]);
+  near(capCtx.capCrd(s, K(2026, 1)), 100000); near(capCtx.capCrd(s, K(2026, 12)), 98997.5); near(capCtx.capCrd(s, K(2030, 1)), 0);
+});
+test('rapport du mois : bien par bien, total = somme, cumul depuis janvier et année', () => {
+  const R = capCtx.capReport(K(2026, 12));
+  const lan = R.batiments.find(b => b.nom === 'Lannion'), roc = R.batiments.find(b => b.nom === 'La Roche');
+  near(lan.cap, 502); near(lan.capAn, 1002.5); near(lan.crd, 98997.5);
+  near(roc.cap, 1000); near(roc.capAn, 12000); near(roc.capAnTot, 12000);
+  near(R.total.cap, 1502); near(R.total.capAn, 13002.5); near(R.mois[10], 500.5 + 1000);
+  assert.equal(R.batiments.length, 2); assert.deepEqual([...R.sans_echeancier], ['Sans prêt']);
+});
+test('rapport : cumul depuis janvier repart à zéro chaque année', () => {
+  const R = capCtx.capReport(K(2027, 1)); near(R.batiments.find(b => b.nom === 'Lannion').capAn, 503.5);
+});
+test('le calcul du capital remboursé est identique dans l\'appli et sur le serveur', () => {
+  const html = Buffer.from(src.match(/const HTML_B64 = '([A-Za-z0-9+/=]+)'/)[1], 'base64').toString('utf8');
+  ['capSeries', 'capCrd', 'capReport'].forEach(n => {
+    const i = html.indexOf('function ' + n + '('); assert.ok(i >= 0, n + ' absent de l\'appli');
+    assert.ok(html.slice(i).startsWith(extract(n)), n + ' diffère entre appli et serveur');
+  });
+});
+
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed ? 1 : 0);
