@@ -87,5 +87,16 @@ await test('résidence principale : import de l\'échéancier, réglages, capita
   assert.ok(!c2.biens.some(b=>b.batiment==='Résidence principale')); assert.equal(c2.total_patrimoine.capital_rembourse_mois,0);
   const vp = await s.mcpCall('vue_portefeuille',{},'https://x'); assert.equal(vp.total.capital_restant_du,0, 'la RP ne doit jamais entrer dans le parc locatif');
 });
+await test('départ d\'un locataire : le prorata payé solde le mois, rattaché au locataire sortant', async () => {
+  const s = store(); const m = new Date().toISOString().slice(0,7);
+  await s.putData({scis:[{id:'s1',nom:'SCI'}],batiments:[{id:'b1',sciId:'s1',nom:'Brélévenez'}],logements:[{id:'l1',batId:'b1',ref:'1G',loyer:380,charges:20,statut:'Occupé'}],
+    locataires:[{id:'loc1',logId:'l1',prenom:'Enguerrand',nom:'Lachaise',entree:'2026-09-22'}],
+    paiements:[{id:'pa1',logId:'l1',mois:m,montant:206.45,statut:'Partiel',versements:[{montant:206.45,date:m+'-15'}]}],prets:[],settings:{}});
+  const r = await s.mcpCall('modifier_lot',{lot:'1G',batiment:'Brélévenez',statut:'Travaux'},'https://x');
+  assert.equal(r.ok,true);
+  const d = await s.getData(), pa = d.paiements[0];
+  assert.equal(pa.statut,'Payé'); assert.equal(pa.du,206.45); assert.equal(pa.prorata,true); assert.equal(pa.locNom,'Enguerrand Lachaise');
+  assert.equal(d.anciens.length,1); assert.equal(d.locataires.length,0);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
