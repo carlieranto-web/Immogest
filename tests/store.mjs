@@ -71,5 +71,21 @@ await test('documents et photos : envoi progressif par lots, sans renvoyer deux 
   assert.equal(mails.length,2);
   const z=Buffer.from(mails[0].attachment[0].content,'base64'); fs.writeFileSync(new URL('./.t2.zip', import.meta.url), z);
 });
+await test('résidence principale : import de l\'échéancier, réglages, capital remboursé inclus ou exclu', async () => {
+  const s = store(); await s.putData({scis:[{id:'s1',nom:'SCI A'}],batiments:[{id:'b1',sciId:'s1',nom:'Lannion'}],logements:[],prets:[],settings:{}});
+  const rows = [{date:'2026-11-05',capital:0,interets:487.5,echeance:514.76,crd_apres:150000},{date:'2026-12-05',capital:0,interets:487.5,echeance:514.76,crd_apres:150000},
+    {date:'2027-09-05',capital:415.8,interets:487.5,echeance:931.11,crd_apres:149584.2},{date:'2027-10-05',capital:417.16,interets:486.15,echeance:931.12,crd_apres:149167.04}];
+  const r = await s.mcpCall('importer_echeancier_pret',{residence_principale:true,banque:'CIC Ouest',contrat:'30047 14112 00020368111',taux_annuel_pct:3.9,echeances:rows},'https://x');
+  assert.equal(r.ok,true); assert.equal(r.echeances,4); assert.equal(r.capital_avant_premiere_echeance,150000); assert.equal(r.lignes_incoherentes,0); assert.equal(r.total_capital,832.96);
+  await assert.rejects(s.mcpCall('importer_echeancier_pret',{residence_principale:true,contrat:'30047 14112 00020368111',echeances:rows},'https://x'), /existe déjà/);
+  const d = await s.getData(); assert.equal(d.prets[0].batId,'rp'); assert.equal(d.prets[0].rp,true); assert.equal(d.settings.rp.inclure,true);
+  const v = await s.mcpCall('residence_principale',{valeur:350000},'https://x'); assert.equal(v.residence_principale.valeur,350000); assert.equal(v.prets.length,1);
+  const c1 = await s.mcpCall('capital_rembourse',{mois:'2027-10'},'https://x');
+  assert.equal(c1.biens.find(b=>b.batiment==='Résidence principale').capital_rembourse_mois,417.16); assert.equal(c1.total_patrimoine.capital_rembourse_mois,417.16);
+  await s.mcpCall('residence_principale',{inclure:false},'https://x');
+  const c2 = await s.mcpCall('capital_rembourse',{mois:'2027-10'},'https://x');
+  assert.ok(!c2.biens.some(b=>b.batiment==='Résidence principale')); assert.equal(c2.total_patrimoine.capital_rembourse_mois,0);
+  const vp = await s.mcpCall('vue_portefeuille',{},'https://x'); assert.equal(vp.total.capital_restant_du,0, 'la RP ne doit jamais entrer dans le parc locatif');
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
