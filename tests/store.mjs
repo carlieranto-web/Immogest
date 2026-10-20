@@ -107,5 +107,14 @@ await test('anciens locataires : recherche, paiements de la location, statut du 
   assert.equal(r.nombre,1); assert.equal(r.anciens[0].paiements,2); assert.equal(r.anciens[0].total_encaisse,306.45); assert.match(r.anciens[0].depot_statut,/2026-11-20/);
   assert.equal((await s.mcpCall('anciens_locataires',{recherche:'inconnu'},'https://x')).nombre,0);
 });
+await test('résidence principale via ajouter_pret / modifier_batiment (outils existants)', async () => {
+  const s = store(); await s.putData({scis:[],batiments:[{id:'b1',nom:'Lannion'}],logements:[],prets:[],settings:{}});
+  const r = await s.mcpCall('ajouter_pret',{batiment:'Résidence principale',banque:'CIC Ouest',capital:150000,taux_annuel_pct:3.9,duree_mois:2,date_premiere_echeance:'2026-11-05',
+    echeances:[{date:'2026-11-05',capital:0,interets:487.5,echeance:514.76,crd_apres:150000},{date:'2027-09-05',capital:415.8,interets:487.5,echeance:931.11,crd_apres:149584.2}]},'https://x');
+  assert.equal(r.ok,true); assert.equal(r.rattache_a,'Résidence principale');
+  const v = await s.mcpCall('modifier_batiment',{batiment:'Résidence principale',valeur_marche:350000,prix_acquisition:260000},'https://x');
+  assert.equal(v.residence_principale.valeur,350000); assert.equal(v.residence_principale.prix_acquisition,260000);
+  const d = await s.getData(); assert.equal(d.batiments.length,1); assert.equal(d.prets[0].batId,'rp');
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
