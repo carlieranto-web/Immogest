@@ -98,5 +98,14 @@ await test('départ d\'un locataire : le prorata payé solde le mois, rattaché 
   assert.equal(pa.statut,'Payé'); assert.equal(pa.du,206.45); assert.equal(pa.prorata,true); assert.equal(pa.locNom,'Enguerrand Lachaise');
   assert.equal(d.anciens.length,1); assert.equal(d.locataires.length,0);
 });
+await test('anciens locataires : recherche, paiements de la location, statut du dépôt', async () => {
+  const s = store();
+  await s.putData({scis:[],batiments:[{id:'b1',nom:'Brélévenez'}],logements:[{id:'l1',batId:'b1',ref:'1G'}],prets:[],settings:{},
+    anciens:[{id:'anc1',logId:'l1',prenom:'Enguerrand',nom:'Lachaise',email:'e@x.fr',entree:'2026-09-22',sortie:'2026-10-20',depot:400,batNom:'Brélévenez',lotRef:'1G'}],
+    paiements:[{id:'p0',logId:'l1',mois:'2026-08',montant:999},{id:'p1',logId:'l1',mois:'2026-09',montant:100},{id:'p2',logId:'l1',mois:'2026-10',montant:206.45,ancId:'anc1'},{id:'p3',logId:'l1',mois:'2026-11',montant:500}]});
+  const r = await s.mcpCall('anciens_locataires',{recherche:'lachaise'},'https://x');
+  assert.equal(r.nombre,1); assert.equal(r.anciens[0].paiements,2); assert.equal(r.anciens[0].total_encaisse,306.45); assert.match(r.anciens[0].depot_statut,/2026-11-20/);
+  assert.equal((await s.mcpCall('anciens_locataires',{recherche:'inconnu'},'https://x')).nombre,0);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
