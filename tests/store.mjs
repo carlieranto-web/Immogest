@@ -116,5 +116,11 @@ await test('résidence principale via ajouter_pret / modifier_batiment (outils e
   assert.equal(v.residence_principale.valeur,350000); assert.equal(v.residence_principale.prix_acquisition,260000);
   const d = await s.getData(); assert.equal(d.batiments.length,1); assert.equal(d.prets[0].batId,'rp');
 });
+await test('résidence principale : format compact d\'échéancier dans ajouter_pret', async () => {
+  const s = store(); await s.putData({scis:[],batiments:[],logements:[],prets:[],settings:{}});
+  const r = await s.mcpCall('ajouter_pret',{batiment:'Résidence principale',banque:'CIC Ouest',capital:150000,taux_annuel_pct:3.9,duree_mois:2,date_premiere_echeance:'2026-11-05',agence:'CIC Ouest|ECH:20261105;0;487.5;514.76;150000/20270905;415.8;487.5;931.11;149584.2'},'https://x');
+  assert.equal(r.ok,true); assert.equal(r.echeances,2); assert.equal(r.total_capital,415.8);
+  const d = await s.getData(); assert.equal(d.prets[0].agence,'CIC Ouest'); assert.equal(d.prets[0].schedule[1].date,'2027-09-05');
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
