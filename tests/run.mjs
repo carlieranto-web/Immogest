@@ -103,6 +103,21 @@ test('le calcul du simulateur est identique dans l\'appli et sur le serveur', ()
   const a = html.slice(html.indexOf('function projCalc('), html.indexOf('\n// ═══ PAGE: PROJETS'));
   assert.equal(a.trim(), extract('projCalc').trim());
 });
+// ── Second locataire sur le même bail (couple, colocation)
+const nomCtx = vm.createContext({});
+vm.runInContext(extract('locNom') + '\nthis.locNom=locNom;', nomCtx);
+test('nom affiché : un seul locataire, deux locataires, même nom de famille', () => {
+  const { locNom } = nomCtx;
+  assert.equal(locNom({ prenom: 'Jean', nom: 'Dupont' }), 'Jean Dupont');
+  assert.equal(locNom({ prenom: 'Jean', nom: 'Dupont', prenom2: 'Marie', nom2: 'Martin' }), 'Jean Dupont et Marie Martin');
+  assert.equal(locNom({ prenom: 'Jean', nom: 'Dupont', prenom2: 'Marie', nom2: 'dupont' }), 'Jean et Marie Dupont');
+  assert.equal(locNom(null), '');
+});
+test('le nom affiché est calculé de la même façon dans l\'appli et sur le serveur', () => {
+  const html = Buffer.from(src.match(/const HTML_B64 = '([A-Za-z0-9+/=]+)'/)[1], 'base64').toString('utf8');
+  const i = html.indexOf('function locNom('), j = html.indexOf('\n', i);
+  assert.equal(html.slice(i, j).trim(), extract('locNom').trim());
+});
 test('la version du cache est identique dans le worker et le service worker', () => {
   const v = src.match(/const APP_VERSION = '([^']+)'/)[1];
   const sw = Buffer.from(src.match(/const SW_B64='([A-Za-z0-9+/=]+)'/)[1], 'base64').toString('utf8');
