@@ -122,5 +122,15 @@ await test('résidence principale : format compact d\'échéancier dans ajouter_
   assert.equal(r.ok,true); assert.equal(r.echeances,2); assert.equal(r.total_capital,415.8);
   const d = await s.getData(); assert.equal(d.prets[0].agence,'CIC Ouest'); assert.equal(d.prets[0].schedule[1].date,'2027-09-05');
 });
+await test('quittance sur plusieurs mois (période et mois manquant)', async () => {
+  const s = store();
+  await s.putData({scis:[{id:'s1',nom:'SCI TEOLA',gerant:'Antonin Carlier',adresse:'Perros-Guirec'}],batiments:[{id:'b1',sciId:'s1',nom:'Saint-Michel'}],logements:[{id:'l1',batId:'b1',ref:'Apt 4',loyer:410,charges:60}],
+    locataires:[{id:'L1',logId:'l1',prenom:'Timéo',nom:'Duquesnoy'}],prets:[],settings:{},
+    paiements:[{id:'a',logId:'l1',mois:'2026-08',montant:470,date:'2026-08-05'},{id:'b',logId:'l1',mois:'2026-09',montant:470,date:'2026-09-05'},{id:'c',logId:'l1',mois:'2026-10',montant:470,date:'2026-10-06'}]});
+  const r = await s.mcpCall('quittance_pdf',{lot:'Apt 4',batiment:'Saint-Michel',mois:'2026-08:2026-10'},'https://x');
+  assert.equal(r.document,'quittance'); assert.equal(r.total_du,1410); assert.equal(r.montant_recu,1410); assert.match(r.lien_telechargement,/\/api\/f\//);
+  const fm=[...(await s.storage.list({prefix:'fm:'})).values()][0]; assert.match(fm.name,/2026-08_2026-10/);
+  await assert.rejects(s.mcpCall('quittance_pdf',{lot:'Apt 4',batiment:'Saint-Michel',mois:'2026-07:2026-09'},'https://x'),/2026-07/);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
