@@ -132,5 +132,26 @@ await test('quittance sur plusieurs mois (période et mois manquant)', async () 
   const fm=[...(await s.storage.list({prefix:'fm:'})).values()][0]; assert.match(fm.name,/2026-08_2026-10/);
   await assert.rejects(s.mcpCall('quittance_pdf',{lot:'Apt 4',batiment:'Saint-Michel',mois:'2026-07:2026-09'},'https://x'),/2026-07/);
 });
+await test('dépôt de bail par Claude : lien à usage unique, classé sur le lot, contrôle du type', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'La Roche',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Apt 1A',loyer:450,charges:100,_ts:1}],locataires:[{id:'t1',logId:'l1',prenom:'A',nom:'B',_ts:1}]});
+  const r = await s.mcpCall('preparer_depot_document',{lot:'Apt 1A',batiment:'La Roche',nom_fichier:'Bail/test.pdf'},'https://x');
+  assert.equal(r.categorie,'Bail'); assert.match(r.commande,/curl -sS -T/);
+  assert.ok(![...(await s.storage.list({prefix:'ul:'})).keys()].some(k=>k.includes(r.lien_envoi.split('/').pop())),'jeton non stocké en clair');
+  const send = (u,b,m='PUT') => s.fetch(new Request(u,{method:m,body:b}));
+  assert.equal((await send('https://x/api/depot/faux',new Uint8Array([0x25,0x50,0x44,0x46]))).status,403);
+  assert.equal((await send(r.lien_envoi,new TextEncoder().encode('<html>'))).status,415);
+  const pdf = new Uint8Array(2500000); pdf.set([0x25,0x50,0x44,0x46],0); pdf[2499999]=7;
+  const ok = await send(r.lien_envoi,pdf); assert.equal(ok.status,200);
+  const j = await ok.json(); assert.equal(j.taille_octets,2500000);
+  const fm = await s.storage.get('fm:'+j.id);
+  assert.equal(fm.name,'Bail test.pdf'); assert.equal(fm.cat,'Bail'); assert.equal(fm.logId,'l1'); assert.equal(fm.locId,'t1'); assert.equal(fm.batId,'b1'); assert.equal(fm.type,'application/pdf'); assert.equal(fm.chunks,3);
+  const back = new Uint8Array(await s.storage.get('fc:'+j.id+':2')); assert.equal(back[back.length-1],7);
+  assert.equal((await send(r.lien_envoi,pdf)).status,403,'usage unique');
+  const r2 = await s.mcpCall('preparer_depot_document',{lot:'Apt 1A',batiment:'La Roche',nom_fichier:'x.pdf'},'https://x');
+  const k2 = [...(await s.storage.list({prefix:'ul:'})).keys()][0], t2 = await s.storage.get(k2); t2.exp = 1; await s.storage.put(k2,t2);
+  assert.equal((await send(r2.lien_envoi,pdf)).status,403,'expiré');
+  await assert.rejects(s.mcpCall('preparer_depot_document',{lot:'Apt 1A',batiment:'La Roche',nom_fichier:'x.pdf',categorie:'Bidon'},'https://x'),/catégorie/);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
