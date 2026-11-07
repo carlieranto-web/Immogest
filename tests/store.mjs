@@ -162,5 +162,15 @@ await test('prorata d\'entrée et statut du locataire calculé sur les mois pass
   const d = await s.getData(); const loc=d.locataires[0];
   if (cur > '2026-09') assert.equal(loc.statutPaiement,'Retard','septembre non payé => retard'); else assert.equal(loc.statutPaiement,'À jour');
 });
+await test('modifier_lot : DPE complet (GES, fourchette, n° ADEME) et refus des valeurs invalides', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Studio 1',loyer:310,charges:0,_ts:1}],locataires:[]});
+  await s.mcpCall('modifier_lot',{lot:'Studio 1',batiment:'Lannion',dpe:'d',ges:'B',energie_min:600,energie_max:850,energie_annee:'2021, 2022, 2023',dpe_numero:'2522E3777943N',dpe_date:'2025-12-01',surface_m2:18.74},'https://x');
+  const l=(await s.getData()).logements[0];
+  assert.equal(l.dpe,'D');assert.equal(l.ges,'B');assert.equal(l.energieMin,600);assert.equal(l.energieMax,850);assert.equal(l.energieAnnee,'2021, 2022, 2023');assert.equal(l.dpeNum,'2522E3777943N');assert.equal(l.dpeDate,'2025-12-01');assert.equal(l.surface,18.74);
+  await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',ges:'H'},'https://x'),/classe/);
+  await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',energie_min:900,energie_max:100},'https://x'),/fourchette/);
+  await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',dpe_numero:'XYZ'},'https://x'),/ADEME/);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
