@@ -153,5 +153,14 @@ await test('dépôt de bail par Claude : lien à usage unique, classé sur le lo
   assert.equal((await send(r2.lien_envoi,pdf)).status,403,'expiré');
   await assert.rejects(s.mcpCall('preparer_depot_document',{lot:'Apt 1A',batiment:'La Roche',nom_fichier:'x.pdf',categorie:'Bidon'},'https://x'),/catégorie/);
 });
+await test('prorata d\'entrée et statut du locataire calculé sur les mois passés', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'La Roche',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Apt 1A',loyer:450,charges:100,_ts:1}],locataires:[{id:'t1',logId:'l1',prenom:'G',nom:'B',entree:'2026-08-27',statutPaiement:'À jour',_ts:1}],paiements:[]});
+  const now=new Date(); const cur=now.toISOString().slice(0,7);
+  let r = await s.mcpCall('enregistrer_encaissement',{lot:'Apt 1A',batiment:'La Roche',mois:'2026-08',montant:88.71},'https://x');
+  assert.equal(r.du,88.71); assert.equal(r.statut,'Payé');
+  const d = await s.getData(); const loc=d.locataires[0];
+  if (cur > '2026-09') assert.equal(loc.statutPaiement,'Retard','septembre non payé => retard'); else assert.equal(loc.statutPaiement,'À jour');
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
