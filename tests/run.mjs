@@ -35,6 +35,13 @@ test('prix de revient = prix + notaire + travaux', () => {
   const c = projCalc(charbo);
   near(c.frais_notaire, 6160); near(c.travaux_total, 175000); near(c.prix_de_revient, 258160); near(c.surface, 171.22);
 });
+test('Simulateur : valeur avant / après travaux', () => {
+  const c = projCalc(Object.assign({}, charbo, { vAvant: 90000, vApres: 250000 }));
+  near(c.decote_achat, 13000); near(c.valeur_creee_travaux, 160000);
+  near(c.plus_value_apres_travaux, 250000 - c.prix_de_revient); near(c.ltv_apres_travaux_pct, c.montant_emprunte / 250000 * 100);
+  near(c.valeur_creee_par_euro_travaux, 160000 / c.travaux_total, 1e-9);
+  const z = projCalc(charbo); assert.equal(z.valeur_avant_travaux, null); assert.equal(z.plus_value_apres_travaux, null);
+});
 test('loyers et rendement brut', () => {
   const c = projCalc(charbo);
   near(c.loyers_annuels, 33120); near(c.rendement_brut_pct, 33120 / 258160 * 100, 1e-9);
