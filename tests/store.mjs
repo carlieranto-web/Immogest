@@ -172,5 +172,45 @@ await test('modifier_lot : DPE complet (GES, fourchette, n° ADEME) et refus des
   await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',energie_min:900,energie_max:100},'https://x'),/fourchette/);
   await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',dpe_numero:'XYZ'},'https://x'),/ADEME/);
 });
+await test('annonce personnalisée : mentions obligatoires remises à jour depuis la fiche (surface, DPE/GES, énergie, Géorisques)', async () => {
+  const s = store();
+  const texte = "Studio rénové et meublé de 23 m² à Lannion (22300).\n\n- Proche gare\n\nLoyer : 400 € par mois\nDépôt de garantie : 400 €.\nLocation meublée.\n\nClasse énergie (DPE) : E.\nLes informations sur les risques auxquels ce bien est exposé sont disponibles sur le site Géorisques : www.georisques.gouv.fr";
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',adresse:'8 rue X, 22300 Lannion',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Studio 5',type:'Studio',meuble:'Oui',surface:23,loyer:410,charges:20,statut:'Vacant',dpe:'E',ges:'B',energieMin:630,energieMax:900,energieAnnee:'2021, 2022, 2023',annonce:{titre:'Studio',texte,sig:'1'},_ts:1}],locataires:[]});
+  const r = await s.mcpCall('annonce_lot',{lot:'l1'},'https://x'), t = r.annonce.texte;
+  assert.match(t, /Loyer : 410 € par mois\./); assert.match(t, /Dépôt de garantie : 410 €\.\nSurface habitable : 23 m²\./);
+  assert.match(t, /Classe énergie \(DPE\) : E - Classe climat \(GES\) : B\./); assert.match(t, /entre 630 € et 900 € par an/);
+  assert.ok(t.indexOf('dépenses annuelles') < t.indexOf('Géorisques'), 'dépenses d\'énergie avant Géorisques');
+  assert.equal((t.match(/Géorisques/g)||[]).length, 1); assert.doesNotMatch(t, /charges|Location directe/i);
+  assert.equal(r.alertes.length, 0);
+});
+await test('annonce : alertes surface du texte ≠ fiche, lot occupé encore publié, lien qui n\'est pas l\'annonce', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Brélévenez',adresse:'5 rue Ar Béo - 22300 Lannion',_ts:1}],logements:[
+    {id:'l1',batId:'b1',ref:'T2 2e',type:'T2',meuble:'Non',surface:13,loyer:480,statut:'Vacant',dpe:'D',ges:'B',annonce:{texte:'T2.\n- Surface au sol : 30 m²\n- Jardin de 200 m²\nLoyer : 1 €',pubDate:'2026-11-10',pubUrl:'https://www.leboncoin.fr/compte/part/mes-annonces'},_ts:1},
+    {id:'l2',batId:'b1',ref:'1D',type:'Studio',meuble:'Oui',surface:15,loyer:380,statut:'Occupé',dpe:'D',annonce:{pubDate:'2026-11-07',pubUrl:'https://www.leboncoin.fr/ad/locations/3304069956'},_ts:1}],locataires:[{id:'c1',logId:'l2',nom:'X',entree:'2026-09-23',depot:380}]});
+  const a = (await s.mcpCall('annonce_lot',{lot:'l1'},'https://x')).alertes.join(' | ');
+  assert.match(a, /30 m²/); assert.doesNotMatch(a, /200/); assert.match(a, /ne mène pas/);
+  const b = (await s.mcpCall('annonce_lot',{lot:'l2'},'https://x')).alertes.join(' | ');
+  assert.match(b, /retirer/); assert.doesNotMatch(b, /ne mène pas/);
+});
+await test('controle_donnees : détecte les incohérences sans rien modifier', async () => {
+  const s = store();
+  const data = {batiments:[{id:'b1',nom:'La Roche',adresse:'5 Rue du Pouliet, 22450 La Roche Derrien',taxeFonciere:5500,_ts:1}],
+    logements:[{id:'l1',batId:'b1',ref:'Apt 1D',type:'T2',surface:32,loyer:480,statut:'Occupé',dpe:'D',_ts:1},
+               {id:'l2',batId:'b1',ref:'Apt RDC',type:'T3',surface:0,loyer:700,statut:'Occupé',dpe:'D',_ts:1},
+               {id:'l3',batId:'b1',ref:'Local',type:'Commercial',surface:0,loyer:350,statut:'Occupé',_ts:1}],
+    locataires:[{id:'c2',logId:'l2',nom:'Y',entree:'',depot:0},{id:'c3',logId:'l3',nom:'Z',entree:'2014-09-01',depot:0}],
+    charges:[{id:'k1',batId:'b1',cat:'Assurance PNO',montant:600,freq:'Annuelle'}]};
+  await s.putData(data);
+  const r = await s.mcpCall('controle_donnees',{},'https://x'), txt = JSON.stringify(r.points);
+  assert.match(txt, /Apt 1D.*sans locataire/); assert.match(txt, /sans date d'entrée/); assert.match(txt, /surface habitable manquante/);
+  assert.match(txt, /frais de gestion non saisis/); assert.doesNotMatch(txt, /PNO non saisie/); assert.doesNotMatch(txt, /taxe foncière non saisie/);
+  assert.doesNotMatch(txt, /"lot":"Local","probleme":"(surface|DPE|dépôt)/, 'un local commercial n\'est pas contrôlé comme un logement');
+  assert.equal(r.points[0].gravite, 'bloquant');
+  assert.deepEqual((await s.getData()).logements, data.logements);
+});
+await test('la clé de l\'ancien stockage JSONBin n\'est plus dans le code', () => {
+  assert.doesNotMatch(src, /X-Master-Key['"]?\s*:\s*['"]\$2a\$/); assert.doesNotMatch(src, /LEGACY_JSONBIN\s*=/);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
