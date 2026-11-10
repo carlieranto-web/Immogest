@@ -212,5 +212,26 @@ await test('controle_donnees : détecte les incohérences sans rien modifier', a
 await test('la clé de l\'ancien stockage JSONBin n\'est plus dans le code', () => {
   assert.doesNotMatch(src, /X-Master-Key['"]?\s*:\s*['"]\$2a\$/); assert.doesNotMatch(src, /LEGACY_JSONBIN\s*=/);
 });
+await test('Visale : enregistrement, échéance auto à 3 ans, état et rappel', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',adresse:'8 rue X, 22300 Lannion',taxeFonciere:9000,_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Studio 4',type:'Studio',surface:20,loyer:360,statut:'Occupé',dpe:'E',_ts:1}],locataires:[{id:'c1',logId:'l1',prenom:'Mewenn',nom:'Mordelet',entree:'2026-08-01',depot:580}]});
+  await s.mcpCall('enregistrer_locataire',{lot:'l1',locataire_id:'c1',visale_numero:'V123',visale_date_effet:'2026-08-01'},'https://x');
+  let loc=(await s.getData()).locataires[0];
+  assert.equal(loc.visale,'Oui'); assert.equal(loc.visaleNum,'V123'); assert.equal(loc.visaleFin,'2029-07-31', '3 ans après la prise d\'effet, veille incluse');
+  const r = await s.mcpCall('liste_locataires',{},'https://x'); const v=r.lots[0].locataire.garantie_visale;
+  assert.equal(v.echeance,'2029-07-31'); assert.equal(v.etat,'valable');
+  // échéance proche → rappel dans le contrôle ; dépassée → bloquant
+  await s.mcpCall('enregistrer_locataire',{lot:'l1',locataire_id:'c1',visale_echeance:new Date(Date.now()+30*86400000).toISOString().slice(0,10)},'https://x');
+  let c=JSON.stringify((await s.mcpCall('controle_donnees',{},'https://x')).points); assert.match(c,/Visale à renouveler/);
+  await s.mcpCall('enregistrer_locataire',{lot:'l1',locataire_id:'c1',visale_echeance:'2026-01-01'},'https://x');
+  c=(await s.mcpCall('controle_donnees',{},'https://x')).points.find(p=>/Visale expirée/.test(p.probleme)); assert.equal(c.gravite,'bloquant');
+  // retrait
+  await s.mcpCall('enregistrer_locataire',{lot:'l1',locataire_id:'c1',visale:false},'https://x');
+  loc=(await s.getData()).locataires[0]; assert.equal(loc.visale,'Non'); assert.equal(loc.visaleFin,undefined);
+});
+await test('Visale : contrat antérieur au 06/01/2026 → pas d\'échéance devinée', () => {
+  const g = new Function(src.match(/function visaleFinAuto\(debut\)\{[^\n]*\}/)[0]+';return visaleFinAuto;')();
+  assert.equal(g('2025-09-01'), ''); assert.equal(g('2026-01-06'), '2029-01-05'); assert.equal(g('2028-02-29'), '2031-02-28');
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
