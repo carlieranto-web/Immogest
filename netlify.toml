@@ -1,0 +1,5 @@
+# ImmoGest Pro est hébergé sur Cloudflare Workers (worker.js), plus sur Netlify.
+# L'ancien site Netlify (lustrous-piroshki-ab9a05) reste relié à ce dépôt : chaque push y déclenchait
+# un déploiement de production (15 crédits sur 300 par mois). Cette commande annule tout build Netlify.
+[build]
+  ignore = "exit 0"
