@@ -299,5 +299,16 @@ await test('repartir_versement : rappel CAF sur 3 mois partiels, simulation puis
   r = await s.mcpCall('enregistrer_encaissement',{lot:'T2',batiment:'Lannion',mois:M(0),montant:250,payeur:'CAF'},'https://x');
   assert.equal((await s.getData()).paiements.find(p=>p.mois===M(0)).versements[0].type,'CAF');
 });
+await test('états des lieux : synchronisés (fusion par fiche) et lisibles par le connecteur, sans les signatures ni les photos', async () => {
+  const s = store();
+  const e1={id:'edl1',logId:'l1',type:'Sortie',statut:'signé',date:'2026-11-13',sig:{bailleur:{img:'data:image/jpeg;base64,AAAA',at:1}},cptPh:{elec:[{k:'a',f:'f1'}]},pieces:[{id:'r1',nom:'Séjour',ph:[],els:[{id:'e1',nom:'Sol',etat:'B',com:'',ph:[{k:'b',f:'f2'}]}]}],_ts:5};
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'T2',loyer:500,charges:0,releves:{date:'2026-11-13',type:'Sortie',idxHP:'12000',idxEauF:'85'},cptElec:'123',_ts:1}],locataires:[],edls:[e1]});
+  const merged = W.mergeDB(await s.getData(), {edls:[Object.assign({},e1,{statut:'brouillon',_ts:2}),{id:'edl2',logId:'l1',type:'Entrée',_ts:3}],tomb:{}});
+  assert.equal(merged.edls.length,2); assert.equal(merged.edls.find(x=>x.id==='edl1').statut,'signé','le plus récent gagne');
+  const r = await s.mcpCall('lire_donnees',{section:'edls'},'https://x');
+  assert.equal(r.nombre,1); assert.equal(r.lignes[0].sig,undefined); assert.deepEqual(r.lignes[0].signatures,['bailleur']); assert.equal(r.lignes[0].nb_photos,2);
+  const lots = await s.mcpCall('liste_locataires',{},'https://x');
+  assert.equal(lots.lots[0].derniers_releves.index_elec_hp_ou_base_kwh,'12000'); assert.equal(lots.lots[0].compteurs.electricite,'123');
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
