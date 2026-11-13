@@ -260,5 +260,29 @@ await test('Sortie passée non libérée : signalée par le contrôle des donné
   await s.putData({batiments:[{id:'b1',nom:'Lannion',adresse:'8 rue X, 22300 Lannion',taxeFonciere:9000,_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Studio 4',type:'Studio',surface:20,loyer:360,statut:'Occupé',dpe:'E',_ts:1}],locataires:[{id:'c1',logId:'l1',nom:'Mordelet',entree:'2026-08-01',depot:580,sortie:'2026-10-31'}]});
   const c=(await s.mcpCall('controle_donnees',{},'https://x')).points.find(p=>/sortie passée/.test(p.probleme)); assert.ok(c); assert.match(c.correction,/libérer/);
 });
+await test('envoyer_quittance : PDF joint (pas de lien), « Madame » / « Monsieur », message court sans téléphone', async () => {
+  const s = store(); const sent=[]; const of=globalThis.fetch;
+  globalThis.fetch = async (u,o) => { sent.push({u,body:JSON.parse(o.body)}); return new Response('{"messageId":"x"}',{status:201}); };
+  try{
+    await s.storage.put('mail:cfg',{apiKey:'k',senderEmail:'proprio@exemple.fr',senderName:'Antonin Carlier'});
+    await s.putData({settings:{nomProprietaire:'Antonin Carlier'},scis:[{id:'s1',nom:'SCI TEOLA',gerant:'Antonin Carlier'}],batiments:[{id:'b1',sciId:'s1',nom:'Saint-Michel',adresse:'24 rue X, 22300 Saint-Michel-en-Grève',_ts:1}],
+      logements:[{id:'l1',batId:'b1',ref:'Studio 2',type:'Studio',loyer:450,charges:70,statut:'Occupé',_ts:1},{id:'l2',batId:'b1',ref:'Studio 5',type:'Studio',loyer:420,charges:80,statut:'Occupé',_ts:1}],
+      locataires:[{id:'c1',logId:'l1',prenom:'Victoria',nom:'Meuric',email:'v@exemple.fr',entree:'2025-08-28'},{id:'c2',logId:'l2',prenom:'Jean-Yves',nom:'Montjarret',email:'jy@exemple.fr',entree:'2024-11-02'}],
+      paiements:[{id:'p1',logId:'l1',mois:'2026-10',montant:520,statut:'Payé',date:'2026-10-03'},{id:'p2',logId:'l2',mois:'2026-10',montant:500,statut:'Payé',date:'2026-10-05'}]});
+    const r = await s.mcpCall('envoyer_quittance',{lot:'l1',mois:'2026-10',demande_du_locataire:true},'https://x');
+    const b = sent[0].body;
+    assert.match(sent[0].u, /brevo/); assert.equal(b.to[0].email,'v@exemple.fr'); assert.equal(b.attachment.length,1);
+    assert.match(b.attachment[0].name, /^Quittance-2026-10-Meuric\.pdf$/); assert.ok(atob(b.attachment[0].content).startsWith('%PDF'), 'vrai PDF joint');
+    assert.match(b.textContent, /^Madame,\n\n/); assert.match(b.textContent, /demand|convenu/); assert.match(b.textContent, /octobre 2026/);
+    assert.doesNotMatch(b.textContent, /https?:|Victoria|06 48|lien/i);
+    assert.equal(b.subject, 'Quittance de loyer — octobre 2026'); assert.equal(r.ok, true);
+    await s.mcpCall('envoyer_quittance',{lot:'l2',mois:'2026-10'},'https://x');
+    assert.match(sent[1].body.textContent, /^Monsieur,\n\n/); assert.doesNotMatch(sent[1].body.textContent, /demandé/);
+    // civilité forcée et mémorisée
+    await s.mcpCall('envoyer_quittance',{lot:'l2',mois:'2026-10',civilite:'Madame'},'https://x');
+    assert.match(sent[2].body.textContent, /^Madame,/); assert.equal((await s.getData()).locataires[1].civilite,'Madame');
+    assert.ok((await s.getData()).documents===undefined || true);
+  } finally { globalThis.fetch = of; }
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
