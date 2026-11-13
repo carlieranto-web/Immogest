@@ -284,5 +284,20 @@ await test('envoyer_quittance : PDF joint (pas de lien), « Madame » / « Monsi
     assert.ok((await s.getData()).documents===undefined || true);
   } finally { globalThis.fetch = of; }
 });
+await test('repartir_versement : rappel CAF sur 3 mois partiels, simulation puis enregistrement, quittance avec la part CAF', async () => {
+  const s = store(); const now=new Date(); const k0=now.getFullYear()*12+now.getMonth();
+  const M=n=>{const k=k0-n;return Math.floor(k/12)+'-'+String(k%12+1).padStart(2,'0');};
+  const pais=[3,2,1].map(n=>({id:'p'+n,logId:'l1',mois:M(n),montant:350,statut:'Partiel',_ts:1,versements:[{montant:350,date:M(n)+'-05',mode:'Virement',type:'Locataire'}]}));
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'T2',loyer:550,charges:50,_ts:1}],locataires:[{id:'t1',logId:'l1',prenom:'Katia',nom:'Test',entree:M(3)+'-01',caf:true,montantCaf:250,statutPaiement:'Retard',_ts:1}],paiements:pais});
+  let r = await s.mcpCall('repartir_versement',{lot:'T2',batiment:'Lannion',montant:750,payeur:'CAF',simulation:true},'https://x');
+  assert.equal(r.repartition.length,3); assert.equal(r.non_affecte,0);
+  assert.equal((await s.getData()).paiements[0].statut,'Partiel','simulation : rien enregistré');
+  r = await s.mcpCall('repartir_versement',{lot:'T2',batiment:'Lannion',montant:800,payeur:'CAF',date:'2026-11-10'},'https://x');
+  assert.equal(r.non_affecte,0); assert.equal(r.repartition[3].mois,M(0)); assert.equal(r.repartition[3].affecte,50,'le surplus va au mois en cours'); assert.equal(r.statut_locataire,'À jour');
+  const d = await s.getData();
+  d.paiements.filter(p=>p.mois<M(0)).forEach(p=>{assert.equal(p.statut,'Payé');assert.equal(p.montant,600);assert.equal(p.versements.filter(v=>v.type==='CAF').reduce((a,v)=>a+v.montant,0),250);});
+  r = await s.mcpCall('enregistrer_encaissement',{lot:'T2',batiment:'Lannion',mois:M(0),montant:250,payeur:'CAF'},'https://x');
+  assert.equal((await s.getData()).paiements.find(p=>p.mois===M(0)).versements[0].type,'CAF');
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
