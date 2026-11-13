@@ -233,5 +233,32 @@ await test('Visale : contrat antérieur au 06/01/2026 → pas d\'échéance devi
   const g = new Function(src.match(/function visaleFinAuto\(debut\)\{[^\n]*\}/)[0]+';return visaleFinAuto;')();
   assert.equal(g('2025-09-01'), ''); assert.equal(g('2026-01-06'), '2029-01-05'); assert.equal(g('2028-02-29'), '2031-02-28');
 });
+await test('Sortie : préavis, date de sortie, prorata du dernier mois, montant ajustable, archivage', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Saint-Michel',adresse:'24 rue X, 22300 Saint-Michel-en-Grève',taxeFonciere:1600,_ts:1}],
+    logements:[{id:'l1',batId:'b1',ref:'Studio 1',type:'Studio',surface:15,loyer:410,charges:60,statut:'Occupé',dpe:'D',_ts:1}],
+    locataires:[{id:'c1',logId:'l1',prenom:'Anthony',nom:'Collet',entree:'2026-09-21',depot:410}],paiements:[]});
+  // sortie le 15/12/2026 : 15 jours sur 31 → 470 × 15/31 = 227,42
+  await s.mcpCall('enregistrer_locataire',{lot:'l1',locataire_id:'c1',date_preavis:'2026-11-15',date_sortie:'2026-12-15'},'https://x');
+  let r=(await s.mcpCall('liste_locataires',{},'https://x')).lots[0].locataire;
+  assert.equal(r.date_sortie,'2026-12-15'); assert.equal(r.preavis_recu,'2026-11-15'); assert.equal(r.du_mois_sortie,227.42);
+  let d=await s.getData(); assert.equal(d.logements[0].dispoDate,'2026-12-16','disponible le lendemain');
+  // montant ajusté à la main
+  await s.mcpCall('enregistrer_locataire',{lot:'l1',locataire_id:'c1',montant_dernier_mois:200},'https://x');
+  r=(await s.mcpCall('liste_locataires',{},'https://x')).lots[0].locataire; assert.equal(r.du_mois_sortie,200);
+  // entrée et sortie le même mois
+  const g = new Function(src.match(/function prorataJours\(tot,mois,entree,sortie\)\{[\s\S]*?return Math\.round\(tot\*\(f-d\+1\)\/nb\*100\)\/100;\}/)[0]+';return prorataJours;')();
+  assert.equal(g(470,'2026-12','2026-12-10','2026-12-20'), Math.round(470*11/31*100)/100);
+  assert.equal(g(470,'2027-01','2026-09-21','2026-12-15'), 0, 'rien de dû après le mois de sortie');
+  assert.equal(g(470,'2026-11','2026-09-21','2026-12-15'), 470); assert.equal(g(470,'2026-12','2026-09-21','2026-12-31'), 470);
+  // annulation
+  await s.mcpCall('enregistrer_locataire',{lot:'l1',locataire_id:'c1',date_sortie:''},'https://x');
+  d=await s.getData(); assert.equal(d.locataires[0].sortie,undefined); assert.equal(d.paiements[0].du,undefined);
+});
+await test('Sortie passée non libérée : signalée par le contrôle des données', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',adresse:'8 rue X, 22300 Lannion',taxeFonciere:9000,_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Studio 4',type:'Studio',surface:20,loyer:360,statut:'Occupé',dpe:'E',_ts:1}],locataires:[{id:'c1',logId:'l1',nom:'Mordelet',entree:'2026-08-01',depot:580,sortie:'2026-10-31'}]});
+  const c=(await s.mcpCall('controle_donnees',{},'https://x')).points.find(p=>/sortie passée/.test(p.probleme)); assert.ok(c); assert.match(c.correction,/libérer/);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
