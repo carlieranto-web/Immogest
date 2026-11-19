@@ -100,6 +100,16 @@ await test('départ d\'un locataire : date de départ exigée, prorata du dernie
   assert.equal(pa.du,du); assert.equal(pa.prorata,true); assert.equal(pa.locNom,'Enguerrand Lachaise'); assert.equal(pa.statut, 206.45>=du-0.005?'Payé':'Partiel');
   assert.equal(d.anciens.length,1); assert.equal(d.anciens[0].sortie,m+'-16'); assert.equal(d.locataires.length,0); assert.equal(d.logements[0].statut,'Travaux');
 });
+await test('lot vacant : entrée prévue du prochain locataire (enregistrée, refusée sur un lot occupé, effaçable)', async () => {
+  const s = store();
+  await s.putData({scis:[{id:'s1',nom:'SCI'}],batiments:[{id:'b1',sciId:'s1',nom:'Brélévenez'}],logements:[{id:'l1',batId:'b1',ref:'1G',loyer:380,charges:20,statut:'Vacant'},{id:'l2',batId:'b1',ref:'2D',loyer:400,charges:20,statut:'Occupé'}],locataires:[{id:'loc2',logId:'l2',prenom:'A',nom:'B',entree:'2026-01-01'}],paiements:[],prets:[],settings:{}});
+  await s.mcpCall('modifier_lot',{lot:'1G',batiment:'Brélévenez',entree_prevue:'2027-01-05',futur_locataire:'M. Martin'},'https://x');
+  let l = (await s.getData()).logements[0]; assert.equal(l.entreePrevue,'2027-01-05'); assert.equal(l.entreePrevueNom,'M. Martin');
+  await assert.rejects(s.mcpCall('modifier_lot',{lot:'2D',batiment:'Brélévenez',entree_prevue:'2027-01-05'},'https://x'), /vacant/);
+  await assert.rejects(s.mcpCall('modifier_lot',{lot:'1G',batiment:'Brélévenez',entree_prevue:'05/01/2027'},'https://x'), /AAAA-MM-JJ/);
+  await s.mcpCall('modifier_lot',{lot:'1G',batiment:'Brélévenez',entree_prevue:''},'https://x');
+  l = (await s.getData()).logements[0]; assert.equal(l.entreePrevue,undefined); assert.equal(l.entreePrevueNom,undefined);
+});
 await test('anciens locataires : recherche, paiements de la location, statut du dépôt', async () => {
   const s = store();
   await s.putData({scis:[],batiments:[{id:'b1',nom:'Brélévenez'}],logements:[{id:'l1',batId:'b1',ref:'1G'}],prets:[],settings:{},
