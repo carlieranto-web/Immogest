@@ -184,6 +184,18 @@ await test('modifier_lot : DPE complet (GES, fourchette, n° ADEME) et refus des
   await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',energie_min:900,energie_max:100},'https://x'),/fourchette/);
   await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',dpe_numero:'XYZ'},'https://x'),/ADEME/);
 });
+await test('mode de charges du lot : compteurs individuels / forfait / provision, lu et modifié par le connecteur', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Studio 1',loyer:310,charges:20,_ts:1},{id:'l2',batId:'b1',ref:'Studio 2',loyer:310,charges:0,_ts:1},{id:'l3',batId:'b1',ref:'Studio 3',loyer:310,charges:30,chargesDetail:{elecMode:'individuel',eauMode:'forfait',eau:30,autresMode:'aucune',autres:0},_ts:1}],locataires:[]});
+  let r = await s.mcpCall('detail_batiment',{batiment:'Lannion'},'https://x');
+  const m = n => r.lots.find(x=>x.lot===n).mode_charges;
+  assert.equal(m('Studio 1'),'à préciser'); assert.match(m('Studio 2'),/compteurs individuels/); assert.equal(m('Studio 3'),'forfait de charges');
+  await s.mcpCall('modifier_lot',{lot:'Studio 1',batiment:'Lannion',mode_charges:'compteur'},'https://x');
+  let l=(await s.getData()).logements.find(x=>x.id==='l1'); assert.equal(l.chargesMode,'compteur'); assert.equal(l.charges,0,'compteurs individuels => charges à 0');
+  await s.mcpCall('modifier_lot',{lot:'Studio 1',batiment:'Lannion',mode_charges:'provision',charges:25},'https://x');
+  l=(await s.getData()).logements.find(x=>x.id==='l1'); assert.equal(l.chargesMode,'provision'); assert.equal(l.charges,25);
+  await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',mode_charges:'autre'},'https://x'),/mode_charges/);
+});
 await test('annonce personnalisée : mentions obligatoires remises à jour depuis la fiche (surface, DPE/GES, énergie, Géorisques)', async () => {
   const s = store();
   const texte = "Studio rénové et meublé de 23 m² à Lannion (22300).\n\n- Proche gare\n\nLoyer : 400 € par mois\nDépôt de garantie : 400 €.\nLocation meublée.\n\nClasse énergie (DPE) : E.\nLes informations sur les risques auxquels ce bien est exposé sont disponibles sur le site Géorisques : www.georisques.gouv.fr";
