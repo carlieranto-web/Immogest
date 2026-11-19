@@ -369,5 +369,132 @@ test('serveur : date du jour à l\'heure de Paris (le 31/10 à 23 h 30 UTC, on e
   assert.ok(!/new Date\(\)\.toISOString\(\)\.slice\(0,(7|10)\)/.test(server), 'date du jour encore calculée en UTC');
   assert.ok(server.includes('makeEngine(d,parisNow())'));
 });
+// ── Non-régression v153 : boucle de synchro (doublons « Impayé » de l'ancien locataire) et bugs vus par le test d'interface v151
+const same = (a, b, m) => assert.equal(JSON.stringify(a), JSON.stringify(b), m); // tableaux venant d'un autre contexte vm
+function uiRun(names, DB, extra = '', els = {}) {
+  const c = vm.createContext({ toast: (m) => { c.__toasts.push(m); }, __toasts: [], persist: () => { c.__persist++; }, __persist: 0, updateNB: () => {}, cM: () => {}, rBat: () => {}, rLoyers: () => {},
+    requestAnimationFrame: () => {}, uid: () => 'u' + Math.random().toString(36).slice(2), confirm: () => true,
+    gv: id => (els[id] || {}).value || '', document: { getElementById: id => els[id] || null, querySelector: () => null } });
+  c.__DB = DB; vm.runInContext('var NOW=new Date("2026-11-19T10:00:00Z");var DB=this.__DB;var _VIEWMODE=false;' + names.map(extractUI).join('\n') + '\n' + extra, c); return c;
+}
+const ancDB = () => ({ logements: [{ id: 'l1', batId: 'b1', ref: 'Studio 1', loyer: 500, charges: 50, statut: 'Vacant' }], locataires: [], paiements: [], _tomb: {},
+  anciens: [{ id: 'anc1', logId: 'l1', prenom: 'Anthony', nom: 'Collet', entree: '2025-01-01', sortie: '2026-11-15', sortieSaisie: true }] });
+const SOLDE = ['gLog', 'gLogLoc', 'isLotOcc', 'prorataJours', 'soldeProrataDepart', 'soldeSortieNotee', 'reparerProrataDeparts'];
+test('boucle de synchro : soldeSortieNotee appelée deux fois → 0 au second appel, aucune ligne en double', () => {
+  const DB = ancDB(), c = uiRun(SOLDE, DB), a = DB.anciens[0];
+  assert.ok(c.soldeSortieNotee(a) > 0, '1er appel : la ligne du mois de sortie est créée');
+  assert.equal(DB.paiements.length, 1); const p = DB.paiements[0]; near(p.du, 275); // 550 × 15/30 assert.equal(p.ancId, 'anc1');
+  const snap = JSON.stringify(DB.paiements);
+  assert.equal(c.soldeSortieNotee(a), 0, '2e appel : rien ne change'); assert.equal(c.soldeSortieNotee(a), 0);
+  assert.equal(DB.paiements.length, 1, 'ligne recréée à chaque synchro'); assert.equal(JSON.stringify(DB.paiements), snap);
+});
+test('boucle de synchro : reparerProrataDeparts idempotent (une ligne existante sans ancId est rattachée une seule fois)', () => {
+  const DB = ancDB(); DB.paiements.push({ id: 'p1', logId: 'l1', mois: '2026-11', montant: 0, statut: 'En attente', versements: [] }, { id: 'p0', logId: 'l1', mois: '2026-10', montant: 550, statut: 'Payé', versements: [{ montant: 550 }] });
+  const c = uiRun(SOLDE, DB);
+  assert.ok(c.reparerProrataDeparts() > 0); const snap = JSON.stringify(DB.paiements);
+  for (let i = 0; i < 5; i++) assert.equal(c.reparerProrataDeparts(), 0, 'appel ' + (i + 2) + ' : persist relancé');
+  assert.equal(DB.paiements.length, 2); assert.equal(JSON.stringify(DB.paiements), snap);
+});
+const dupRows = (n, extra) => Array.from({ length: n }, (_, i) => Object.assign({ id: 'd' + String(i).padStart(3, '0'), logId: 'l1', mois: '2026-11', montant: 0, du: 266.13, prorata: true, statut: 'Impayé', versements: [], locNom: 'Anthony Collet', ancId: 'anc1', _ts: 1000 + i }, extra || {}));
+const DEDUP = ['dedupPaiAnc', 'nettoyerDoublonsPai'];
+test('nettoyage : 50 doublons vides + 1 ligne payée → la ligne payée seule est conservée, 50 tombstones', () => {
+  const DB = ancDB(); DB.paiements = dupRows(50).concat([{ id: 'pay', logId: 'l1', mois: '2026-11', montant: 266.13, du: 266.13, statut: 'Payé', versements: [{ montant: 266.13, date: '2026-11-10' }], ancId: 'anc1', _ts: 5 },
+    { id: 'autre', logId: 'l1', mois: '2026-10', montant: 0, statut: 'Impayé', versements: [], ancId: 'anc1', _ts: 7 }, { id: 'nouv', logId: 'l1', mois: '2026-11', montant: 0, statut: 'En attente', versements: [], _ts: 8 }]);
+  const c = uiRun(DEDUP, DB);
+  assert.equal(c.nettoyerDoublonsPai(), 50);
+  same(DB.paiements.map(p => p.id), ['pay', 'autre', 'nouv'], 'ligne payée, autre mois et ligne du nouvel entrant intacts');
+  assert.equal(Object.keys(DB._tomb).length, 50); dupRows(50).forEach(p => assert.ok(DB._tomb[p.id] >= p._ts, 'tombstone ' + p.id));
+  assert.equal(c.nettoyerDoublonsPai(), 0, 'idempotent');
+});
+test('nettoyage : 50 doublons vides sans paiement → la plus ancienne est gardée, 49 supprimées', () => {
+  const DB = ancDB(); DB.paiements = dupRows(50).reverse(); const c = uiRun(DEDUP, DB);
+  assert.equal(c.nettoyerDoublonsPai(), 49); assert.equal(DB.paiements.length, 1); assert.equal(DB.paiements[0].id, 'd000');
+  assert.equal(Object.keys(DB._tomb).length, 49); assert.ok(!DB._tomb.d000);
+});
+test('nettoyage : une ligne avec versements, montant, montant ajusté, date ou note n\'est jamais supprimée', () => {
+  const DB = ancDB(); DB.paiements = [dupRows(1, { id: 'v1', versements: [{ montant: 0, date: '2026-11-02' }] })[0], dupRows(1, { id: 'v2', versements: [{ montant: 100 }] })[0],
+    dupRows(1, { id: 'm1', montant: 50 })[0], dupRows(1, { id: 'dm', duManuel: true, du: 200 })[0], dupRows(1, { id: 'dt', date: '2026-11-03' })[0], dupRows(1, { id: 'nt', note: 'arrangement' })[0]];
+  const c = uiRun(DEDUP, DB);
+  assert.equal(c.nettoyerDoublonsPai(), 0); assert.equal(DB.paiements.length, 6); assert.equal(Object.keys(DB._tomb).length, 0);
+});
+test('nettoyage des doublons : même règle dans l\'appli et sur le serveur', () => {
+  assert.equal(extractUI('dedupPaiAnc'), extract('dedupPaiAnc'));
+});
+test('fusion : un appareil resté en v150-v152 qui renvoie les doublons supprimés ne les ressuscite pas', () => {
+  const rows = dupRows(50), tomb = {}; rows.slice(1).forEach(p => { tomb[p.id] = 2000; });
+  const server = { paiements: [rows[0]], tomb }, old = { paiements: rows, tomb: {} };
+  const m = mergeDB(server, old); same(m.paiements.map(p => p.id), ['d000']);
+});
+test('fiche ancien locataire : ne liste pas le paiement du nouvel entrant du mois de sortie (appli et serveur)', () => {
+  const a = { id: 'anc1', logId: 'l1', entree: '2025-01-01', sortie: '2026-11-15' };
+  const pais = [{ id: 'own', logId: 'l1', mois: '2026-11', montant: 266.13, ancId: 'anc1' }, { id: 'new', logId: 'l1', mois: '2026-11', montant: 290 }, { id: 'old', logId: 'l1', mois: '2026-05', montant: 550 },
+    { id: 'apr', logId: 'l1', mois: '2026-12', montant: 550 }, { id: 'x', logId: 'l2', mois: '2026-05', montant: 1 }];
+  const locs = [{ id: 't2', logId: 'l1', entree: '2026-11-16' }];
+  const cs = vm.createContext({}), cu = vm.createContext({});
+  vm.runInContext(extract('ancPaiFiltre') + ';this.f=ancPaiFiltre;', cs); vm.runInContext(extractUI('ancPaiFiltre') + ';this.f=ancPaiFiltre;', cu);
+  [cs.f, cu.f].forEach(f => {
+    same(f(a, pais, locs).map(p => p.id).sort(), ['old', 'own']);
+    same(f(a, pais.filter(p => p.id !== 'own'), locs).map(p => p.id), ['old'], 'nouvel entrant entré le 16 : sa ligne n\'est pas celle du sortant');
+    same(f(a, pais.filter(p => p.id !== 'own'), []).map(p => p.id).sort(), ['new', 'old'], 'ancienne donnée sans ancId ni nouvel entrant : conservée');
+  });
+  assert.equal(extract('ancPaiFiltre'), extractUI('ancPaiFiltre'));
+  assert.ok(/ancPaiFiltre\(a,DB\.paiements,DB\.locataires\)/.test(extractUI('ancPais')), 'ancPais utilise ancPaiFiltre');
+});
+const PAI_FN = ['gLog', 'gBat', 'gLogLoc', 'paiOf', 'paiDu', 'duMois', 'prorataJours', 'locMoisListe', 'majStatutLoc', 'r2', 'fmt', 'fmtC', 'savePai'];
+test('enregistrer un paiement : « Payé » choisi à la main pour 400 € sur 550 € dus → Partiel', () => {
+  const DB = uiDB(); DB.batiments = []; DB._cl = 'l1'; DB._cv = {};
+  const els = { 'pai-mois': { value: '2026-10' }, 'pai-montant': { value: '400' }, 'pai-date': { value: '2026-10-05' }, 'pai-mode': { value: 'Virement' }, 'pai-statut': { value: 'Payé' } };
+  uiRun(PAI_FN, DB, '', els).savePai(); const p = DB.paiements[0];
+  assert.equal(p.montant, 400); assert.equal(p.statut, 'Partiel');
+  els['pai-montant'].value = '550'; els['pai-statut'].value = 'Partiel'; uiRun(PAI_FN, DB, '', els).savePai();
+  assert.equal(DB.paiements.length, 1); assert.equal(DB.paiements[0].statut, 'Payé', '550 sur 550 : Payé même si « Partiel » est choisi');
+});
+test('« + Paiement » global : pas de paiement sans lot ; le lot choisi dans la liste est utilisé', () => {
+  const DB = uiDB(); DB.batiments = []; DB._cl = null; DB._cv = {};
+  const els = { 'pai-mois': { value: '2026-10' }, 'pai-montant': { value: '550' }, 'pai-date': { value: '2026-10-05' }, 'pai-mode': { value: 'Virement' }, 'pai-statut': { value: 'Payé' }, 'pai-lot': { value: '' } };
+  let c = uiRun(PAI_FN, DB, '', els); c.savePai();
+  assert.equal(DB.paiements.length, 0, 'paiement créé sans lot'); assert.ok(c.__toasts.some(t => /lot/i.test(t)));
+  els['pai-lot'].value = 'l1'; DB._cl = null; uiRun(PAI_FN, DB, '', els).savePai();
+  assert.equal(DB.paiements.length, 1); assert.equal(DB.paiements[0].logId, 'l1'); assert.equal(DB.paiements[0].statut, 'Payé');
+});
+test('charges annuelles (tableau de bord, statistiques, patrimoine, onglet Charges) : une charge ponctuelle n\'est pas annuelle', () => {
+  const DB = { batiments: [{ id: 'b1' }], charges: [{ id: 'c1', batId: 'b1', freq: 'Ponctuelle', montant: 8000 }, { id: 'c2', batId: 'b1', freq: 'Annuelle', montant: 300 }, { id: 'c3', batId: 'b1', freq: 'Mensuelle', montant: 10 }, { id: 'c4', batId: 'b1', freq: 'Trimestrielle', montant: '25' }] };
+  const c = uiRun(['gBat', 'gBatCh', 'gBatChAn'], DB); assert.equal(c.gBatChAn('b1'), 300 + 120 + 100);
+});
+test('Loyers du mois : reste par lot = dû réel du mois − reçu ; « Attendu HC » au prorata comme le CC', () => {
+  const c = uiRun(['duHC'], {}); near(c.duHC({ loyer: 500, charges: 50 }, 266.13), 241.94); assert.equal(c.duHC({ loyer: 0, charges: 0 }, 0), 0); assert.equal(c.duHC({ loyer: 500, charges: 50 }, 550), 500);
+  const rl = extractUI('rLoyers');
+  assert.ok(!rl.includes('var due=r.l.loyer+(r.l.charges||0)'), 'reste calculé sur loyer + charges au lieu du dû du mois');
+  assert.ok(!rl.includes('return a+r.l.loyer;},0);\n  var occ'), 'Attendu HC non proratisé');
+});
+test('montants au centime : 283,87 € et non 284 € (confirmation d\'encaissement, ligne du mois)', () => {
+  const c = uiRun(['fmt', 'fmtC'], {}); assert.equal(c.fmtC(283.87), '283,87 €'); assert.equal(c.fmt(283.87, 1), '283,87 €'); assert.equal(c.fmt(283.87), '284 €', 'fmt sans option inchangé'); assert.match(c.fmtC(550), /^550 €$/); assert.match(c.fmtC(1200.5), /^1\s?200,50 €$/);
+  assert.ok(extractUI('quickPay').includes("encaissement de '+fmt(reste,1)"), 'confirmation d\'encaissement arrondie à l\'euro');
+  assert.ok(uiHtml.includes("min-width:60px;text-align:right;\">'+fmtC(reste)") && uiHtml.includes("(r.pai&&r.pai.montant>0?fmtC(r.pai.montant)") && uiHtml.includes("(p.montant>0?fmtC(p.montant):'—')"), 'récapitulatif, ligne du mois et fiche ancien au centime');
+});
+test('message de quittance : « d\'octobre », « d\'août » (élision), « de novembre » (appli et serveur)', () => {
+  ['ui', 'srv'].forEach(w => {
+    const ex = w === 'ui' ? extractUI : extract, c = vm.createContext({});
+    vm.runInContext(['prenomFeminin', 'locCivilite', 'quittMsgTexte'].map(ex).join('\n') + ';this.f=quittMsgTexte;', c);
+    const loc = { id: 't1', civilite: 'Monsieur', prenom: 'Jean', nom: 'Dupont' };
+    const o = c.f(loc, 'octobre 2026', false, 'X', false), a = c.f(loc, 'août 2026', false, 'X', false), n = c.f(loc, 'novembre 2026', false, 'X', false);
+    assert.ok(/d'octobre 2026/.test(o) && !/de octobre/.test(o), w + ' : ' + o); assert.ok(/d'août 2026/.test(a) && !/de août/.test(a), w); assert.ok(/de novembre 2026/.test(n), w);
+  });
+});
+test('durée d\'occupation : 01/01/2024 → 31/12/2026 = 3 ans (dernier jour inclus)', () => {
+  const c = uiRun(['ancDuree'], {}); assert.equal(c.ancDuree({ entree: '2024-01-01', sortie: '2026-12-31' }), '3 ans');
+  assert.equal(c.ancDuree({ entree: '2025-01-01', sortie: '2026-11-15' }), '1 an 10 mois'); assert.equal(c.ancDuree({ entree: '2026-01-01', sortie: '2026-06-30' }), '6 mois');
+});
+test('libellé « prorata » seulement si le mois est réellement partiel (entrée le 1er ou sortie le dernier jour : mois complet)', () => {
+  const c = uiRun(['jourPartiel'], {});
+  assert.equal(c.jourPartiel('2026-10', '2026-10-01', false), false); assert.equal(c.jourPartiel('2026-10', '2026-10-16', false), true);
+  assert.equal(c.jourPartiel('2026-10', '2026-10-31', true), false); assert.equal(c.jourPartiel('2026-10', '2026-10-15', true), true);
+  assert.equal(c.jourPartiel('2026-11', '2026-10-16', false), false); assert.equal(c.jourPartiel('2026-10', '', false), false);
+  assert.ok(!/\(p\.prorata\?' \(prorata\)':''\)/.test(uiHtml), 'fiche ancien : (prorata) affiché pour un mois complet');
+  assert.ok(!uiHtml.includes(":'prorata';\n"), 'modale d\'encaissement : « prorata » par défaut');
+});
+test('prêt : mensualité affichée assurance comprise, avec la part hors assurance précisée', () => {
+  assert.ok(/dont assurance/.test(uiHtml) && /hors assurance/.test(uiHtml));
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed ? 1 : 0);

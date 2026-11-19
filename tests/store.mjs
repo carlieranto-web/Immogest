@@ -517,5 +517,42 @@ await test('révision IRL : rappel conforme à l\'art. 17-1 (pas de rétroactivi
   if (r.rappel) { assert.ok(!/au-delà d'un an/.test(r.rappel.split('Aucun effet')[0]) && !/rétroactif au-delà/.test(r.rappel), r.rappel); assert.match(r.rappel, /17-1/); assert.match(r.rappel, /demande du bailleur/); }
   else assert.ok(/17-1/.test(src) && !/sans effet rétroactif au-delà d\\'un an/.test(src));
 });
+// ── Non-régression v153 : doublons « Impayé » de l'ancien locataire créés par la boucle de synchro v150-v152
+const dupPai = (n, t0 = 1000) => Array.from({ length: n }, (_, i) => ({ id: 'd' + String(i).padStart(4, '0'), logId: 'l1', mois: '2026-11', montant: 0, du: 266.13, prorata: true, statut: 'Impayé', versements: [], locNom: 'Anthony Collet', ancId: 'anc1', _ts: t0 + i }));
+const dupBase = () => ({ batiments: [{ id: 'b1', nom: 'A', _ts: 1 }], logements: [{ id: 'l1', batId: 'b1', ref: 'Studio 1', loyer: 500, charges: 50, statut: 'Vacant', _ts: 1 }], locataires: [],
+  anciens: [{ id: 'anc1', logId: 'l1', prenom: 'Anthony', nom: 'Collet', entree: '2025-01-01', sortie: '2026-11-15', sortieSaisie: true, _ts: 1 }], settings: {} });
+await test('serveur : doublons vides de l\'ancien locataire supprimés à la lecture (tombstones), ligne payée et autres paiements intacts', async () => {
+  const s = store(), d = dupBase();
+  d.paiements = dupPai(50).concat([{ id: 'pay', logId: 'l1', mois: '2026-11', montant: 266.13, du: 266.13, statut: 'Payé', versements: [{ montant: 266.13, date: '2026-11-10' }], ancId: 'anc1', _ts: 5 },
+    { id: 'oct', logId: 'l1', mois: '2026-10', montant: 550, statut: 'Payé', versements: [{ montant: 550 }], ancId: 'anc1', _ts: 5 }, { id: 'vide', logId: 'l1', mois: '2026-09', montant: 0, statut: 'Impayé', versements: [], ancId: 'anc1', _ts: 5 }]);
+  await s.putData(d); const rev0 = (await s.storage.get('data:meta')).rev;
+  const g = await s.getData();
+  assert.equal(g.paiements.length, 3, 'lignes restantes'); assert.equal(g.paiements.map(p => p.id).join(','), 'pay,oct,vide');
+  assert.equal(Object.keys(g.tomb).length, 50); dupPai(50).forEach(p => assert.ok(g.tomb[p.id] >= p._ts));
+  assert.ok((await s.storage.get('data:meta')).rev > rev0, 'réparation enregistrée'); const rev1 = (await s.storage.get('data:meta')).rev;
+  assert.equal((await s.getData()).paiements.length, 3); assert.equal((await s.storage.get('data:meta')).rev, rev1, 'idempotent : pas de nouvelle écriture');
+  const r = await s.mcpCall('anciens_locataires', { recherche: 'collet' }, 'https://x'); assert.equal(r.anciens[0].paiements, 3);
+});
+await test('serveur : 4 275 doublons sans paiement → une seule ligne gardée (la plus ancienne) ; une ligne avec versements n\'est jamais supprimée', async () => {
+  const s = store(), d = dupBase(); d.paiements = dupPai(4275).reverse().concat([{ id: 'vers', logId: 'l1', mois: '2026-08', montant: 0, versements: [{ montant: 0, date: '2026-08-03' }], ancId: 'anc1', _ts: 9 }, { id: 'vers2', logId: 'l1', mois: '2026-08', montant: 0, versements: [{ montant: 10 }], ancId: 'anc1', _ts: 9 }]);
+  await s.putData(d); const g = await s.getData();
+  assert.equal(g.paiements.length, 3, 'lignes restantes'); assert.equal(g.paiements.map(p => p.id).join(','), 'd0000,vers,vers2'); assert.equal(Object.keys(g.tomb).length, 4274);
+});
+await test('synchro : un appareil v150-v152 qui renvoie les doublons ou en recrée un ne fait plus grossir la base', async () => {
+  const s = store(), tok = await sess(s), d = dupBase(); d.paiements = dupPai(20); await s.putData(d);
+  const put = async data => (await (await call(s, tok, '/api/data', { method: 'PUT', body: JSON.stringify({ data }) })).json()).data;
+  const old = Object.assign(dupBase(), { paiements: dupPai(20), tomb: {} }); // appareil resté en v152 : ses 20 lignes, sans les tombstones
+  let r = await put(old); assert.equal(r.paiements.length, 1); assert.equal(r.paiements[0].id, 'd0000');
+  const neuf = { id: 'new1', logId: 'l1', mois: '2026-11', montant: 0, du: 266.13, prorata: true, statut: 'Impayé', versements: [], ancId: 'anc1', _ts: Date.now() };
+  r = await put(Object.assign(dupBase(), { paiements: dupPai(20).concat([neuf]), tomb: {} })); // il en recrée une à la synchro suivante
+  assert.equal(r.paiements.length, 1); assert.ok(r.tomb.new1 >= neuf._ts, 'la ligne recréée est supprimée avec tombstone');
+  assert.equal((await s.getData()).paiements.length, 1);
+});
+await test('anciens_locataires : le paiement du nouvel entrant au mois de sortie n\'est pas compté pour l\'ancien', async () => {
+  const s = store(), d = dupBase(); d.locataires = [{ id: 't2', logId: 'l1', prenom: 'N', nom: 'Entrant', entree: '2026-11-16' }];
+  d.paiements = [{ id: 'own', logId: 'l1', mois: '2026-11', montant: 275, ancId: 'anc1' }, { id: 'new', logId: 'l1', mois: '2026-11', montant: 275 }, { id: 'old', logId: 'l1', mois: '2026-03', montant: 550 }];
+  await s.putData(d); const r = await s.mcpCall('anciens_locataires', { recherche: 'collet' }, 'https://x');
+  assert.equal(r.anciens[0].paiements, 2); assert.equal(r.anciens[0].total_encaisse, 825);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
