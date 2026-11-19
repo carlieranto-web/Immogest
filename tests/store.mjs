@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 let src = fs.readFileSync(new URL('../worker.js', import.meta.url), 'utf8')
   .replace(/^import PDFJS_MAIN from .*$/m, "const PDFJS_MAIN='';").replace(/^import PDFJS_WORKER from .*$/m, "const PDFJS_WORKER='';");
-src += '\nexport {zipOne,crc32,mergeDB};';
+src += '\nexport {zipOne,crc32,mergeDB,makeEngine};';
 const tmp = new URL('./.worker-test.mjs', import.meta.url);
 fs.writeFileSync(tmp, src);
 const W = await import(tmp.href + '?t=' + Date.now());
@@ -17,6 +17,7 @@ const store = () => new W.Store({storage:new Mem(),waitUntil(){}}, {});
 
 let failed=0,passed=0;
 async function test(n,f){try{await f();passed++;console.log('✓ '+n);}catch(e){failed++;console.error('✗ '+n+'\n   '+e.message);}}
+const near = (a, b, eps = 0.01, msg = '') => assert.ok(Math.abs(a - b) <= eps, `${msg} attendu ${b}, obtenu ${a}`);
 
 await test('CRC32 conforme (valeur de référence)', () => { assert.equal(W.crc32(new TextEncoder().encode('123456789')), 0xCBF43926); });
 await test('ZIP lisible : signature et contenu décompressé identique', async () => {
@@ -321,6 +322,83 @@ await test('états des lieux : synchronisés (fusion par fiche) et lisibles par 
   assert.equal(r.nombre,1); assert.equal(r.lignes[0].sig,undefined); assert.deepEqual(r.lignes[0].signatures,['bailleur']); assert.equal(r.lignes[0].nb_photos,2);
   const lots = await s.mcpCall('liste_locataires',{},'https://x');
   assert.equal(lots.lots[0].derniers_releves.index_elec_hp_ou_base_kwh,'12000'); assert.equal(lots.lots[0].compteurs.electricite,'123');
+});
+// ── Non-régression audit du 19/11/2026 (valeurs attendues calculées à la main)
+const auditBase = () => ({scis:[{id:'s1',nom:'SCI A',gerant:'G',adresse:'1 rue X 22300 Lannion'}],batiments:[{id:'b1',sciId:'s1',nom:'Lannion',adresse:'1 rue X 22300 Lannion'}],
+  logements:[{id:'l1',batId:'b1',ref:'A1',loyer:500,charges:50,statut:'Occupé'}],locataires:[{id:'t1',logId:'l1',prenom:'Jean',nom:'Dupont',entree:'2025-01-01',email:'j@x.fr'}],
+  paiements:[],charges:[],prets:[],anciens:[],settings:{}});
+await test('quittance du mois d\'entrée au prorata (entrée 16/10, 550 × 16/31 = 283,87 payé) : quittance et non reçu partiel', async () => {
+  const s = store(); const d = auditBase(); d.locataires[0].entree = '2026-10-16'; await s.putData(d);
+  await s.mcpCall('enregistrer_encaissement',{lot:'l1',mois:'2026-10',montant:283.87,date:'2026-10-20'},'https://x');
+  const q = await s.mcpCall('quittance_pdf',{lot:'l1',mois:'2026-10'},'https://x');
+  assert.equal(q.document, 'quittance'); assert.equal(q.total_du, 283.87); assert.equal(q.montant_recu, 283.87);
+});
+await test('enregistrer_encaissement : 250 € ajoutés à un paiement de 300 € saisi sans versements → 550, Payé', async () => {
+  const s = store(); const d = auditBase();
+  d.paiements = [{id:'pa1',logId:'l1',mois:'2026-10',montant:300,date:'2026-10-05',mode:'Virement',statut:'Partiel'}]; await s.putData(d);
+  const r = await s.mcpCall('enregistrer_encaissement',{lot:'l1',mois:'2026-10',montant:250,date:'2026-10-12'},'https://x');
+  assert.equal(r.total_encaisse_mois, 550, 'les 300 € déjà saisis sont perdus'); assert.equal(r.statut, 'Payé');
+  const p = (await s.getData()).paiements.find(x => x.mois === '2026-10');
+  assert.equal(p.montant, 550); assert.equal(p.versements.reduce((a,v)=>a+v.montant,0), 550);
+});
+await test('mois de changement de locataire : l\'encaissement du nouvel entrant ne s\'ajoute pas au paiement du sortant', async () => {
+  const s = store(); const d = auditBase();
+  d.locataires = [{id:'t2',logId:'l1',prenom:'Marie',nom:'Martin',entree:'2026-10-16',email:'m@x.fr'}];
+  d.anciens = [{id:'anc1',locId:'t1',logId:'l1',prenom:'Jean',nom:'Dupont',entree:'2025-01-01',sortie:'2026-10-15'}];
+  // sortant : 550 × 15/31 = 266,13 ; entrant : 550 × 16/31 = 283,87
+  d.paiements = [{id:'paOld',logId:'l1',mois:'2026-10',montant:266.13,du:266.13,prorata:true,statut:'Payé',ancId:'anc1',locNom:'Jean Dupont',versements:[{montant:266.13,date:'2026-10-02',type:'Locataire'}]}];
+  await s.putData(d);
+  const r = await s.mcpCall('enregistrer_encaissement',{lot:'l1',mois:'2026-10',montant:283.87,date:'2026-10-20'},'https://x');
+  const dd = await s.getData(), oct = dd.paiements.filter(p => p.logId === 'l1' && p.mois === '2026-10');
+  const old = oct.find(p => p.ancId === 'anc1'), nw = oct.find(p => !p.ancId);
+  assert.equal(old.montant, 266.13, 'le paiement de l\'ancien locataire a été modifié');
+  assert.ok(nw, 'aucun paiement propre au nouveau locataire'); near(nw.montant, 283.87); assert.equal(nw.statut, 'Payé');
+  assert.equal(r.total_encaisse_mois, 283.87); assert.equal(r.du, 283.87);
+  const E = W.makeEngine(dd, new Date('2026-11-05T10:00:00Z')); const loc = dd.locataires[0]; E.majStatutLoc(loc);
+  assert.equal(loc.statutPaiement, 'À jour', 'nouveau locataire signalé en retard alors qu\'il a payé son prorata');
+});
+await test('arrondi : dû 733,33, versements 212,18 + 521,15 → Payé, 733,33', async () => {
+  const s = store(); const d = auditBase(); d.logements[0].loyer = 700; d.logements[0].charges = 33.33; await s.putData(d);
+  await s.mcpCall('enregistrer_encaissement',{lot:'l1',mois:'2026-10',montant:212.18,date:'2026-10-05'},'https://x');
+  const r = await s.mcpCall('enregistrer_encaissement',{lot:'l1',mois:'2026-10',montant:521.15,date:'2026-10-08'},'https://x');
+  assert.equal(r.statut, 'Payé'); assert.equal(r.total_encaisse_mois, 733.33);
+  const p = (await s.getData()).paiements.find(x => x.mois === '2026-10'); assert.equal(p.statut, 'Payé'); assert.equal(p.montant, 733.33);
+});
+await test('révision 500 → 510 : les mois passés payés 550 (ancien loyer) restent Payé et le locataire est à jour', async () => {
+  const d = auditBase(); d.logements[0].loyer = 510; d.locataires[0].entree = '2026-07-01';
+  ['2026-07','2026-08','2026-09'].forEach((m,i) => d.paiements.push({id:'p'+i,logId:'l1',mois:m,montant:550,statut:'Payé',versements:[{montant:550,date:m+'-05',type:'Locataire'}]}));
+  d.paiements.push({id:'p9',logId:'l1',mois:'2026-10',montant:560,statut:'Payé',versements:[{montant:560,date:'2026-10-05',type:'Locataire'}]});
+  const E = W.makeEngine(d, new Date('2026-11-05T10:00:00Z')); const loc = d.locataires[0]; E.majStatutLoc(loc);
+  assert.equal(loc.statutPaiement, 'À jour');
+  E.AI_FN.paiements({lot:'l1'}).paiements.filter(p => p.mois < '2026-10').forEach(p => assert.equal(p.statut, 'Payé', p.mois));
+});
+await test('duMois : un mois antérieur à l\'entrée du locataire n\'est pas dû (0)', async () => {
+  const d = auditBase(); d.locataires[0].entree = '2026-10-16'; const E = W.makeEngine(d, new Date('2026-11-05T10:00:00Z'));
+  near(E.duMois('l1','2026-10'), 283.87); assert.equal(E.duMois('l1','2026-09'), 0); assert.equal(E.duMois('l1','2025-12'), 0);
+  assert.equal(E.duMois('l1','2026-11'), 550);
+});
+await test('charges d\'exploitation annuelles : une charge ponctuelle (travaux 8 000 € en 2024) n\'est pas récurrente', async () => {
+  const d = auditBase(); d.batiments[0].taxeFonciere = 1200;
+  d.charges = [{id:'c1',batId:'b1',cat:'Entretien/Travaux',montant:8000,freq:'Ponctuelle',date:'2024-03-10'},{id:'c2',batId:'b1',cat:'Assurance PNO',montant:300,freq:'Annuelle'}];
+  const v = W.makeEngine(d, new Date('2026-11-19T10:00:00Z')).AI_FN.vue_portefeuille();
+  assert.equal(v.total.charges_exploitation_an, 1500, 'PNO 300 + TF 1200');
+  assert.equal(v.total.cash_flow_mensuel_actuel, 375, '(500 × 12 − 1500) / 12');
+});
+await test('annuités d\'un prêt sans échéancier : assurance emprunteur 45 €/mois incluse', async () => {
+  const d = auditBase(); d.prets = [{id:'p1',batId:'b1',capital:150000,taux:3.5,duree:240,debut:'2025-01-05',assurance:45}];
+  const r = 0.035/12, m = 150000*r/(1-Math.pow(1+r,-240)); // formule bancaire : 869,94 €
+  near(m, 869.94, 0.005); near((m+45)*12, 10979.28, 0.01);
+  const v = W.makeEngine(d, new Date('2026-11-19T10:00:00Z')).AI_FN.vue_portefeuille();
+  near(v.total.annuites_an, 10979.28, 0.01, 'annuités');
+});
+await test('délai de restitution du dépôt de garantie : fin de mois (31/12 → 31/01 et 28/02 ; 31/01 → 28/02 et 31/03)', async () => {
+  const s = store(); const d = auditBase();
+  d.anciens = [{id:'anc1',logId:'l1',prenom:'Paul',nom:'X',entree:'2024-01-01',sortie:'2026-12-31',depot:500},{id:'anc2',logId:'l1',prenom:'Luc',nom:'Y',entree:'2023-01-01',sortie:'2026-01-31',depot:500}];
+  await s.putData(d);
+  const r = await s.mcpCall('anciens_locataires',{},'https://x');
+  const a1 = r.anciens.find(x => x.id === 'anc1').depot_statut, a2 = r.anciens.find(x => x.id === 'anc2').depot_statut;
+  assert.match(a1, /2027-01-31/); assert.match(a1, /2027-02-28/);
+  assert.match(a2, /2026-02-28/); assert.match(a2, /2026-03-31/);
 });
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);

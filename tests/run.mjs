@@ -194,5 +194,85 @@ test('le calcul du capital remboursé est identique dans l\'appli et sur le serv
   });
 });
 
+// ── Non-régression audit du 19/11/2026 : fonctions de l'appli (interface décodée depuis HTML_B64)
+const uiHtml = Buffer.from(src.match(/const HTML_B64 = '([A-Za-z0-9+/=]+)'/)[1], 'base64').toString('utf8');
+function extractUI(name) {
+  const i = uiHtml.indexOf('function ' + name + '(');
+  assert.ok(i >= 0, 'fonction ' + name + ' introuvable dans l\'appli');
+  let depth = 0, j = uiHtml.indexOf('{', i);
+  for (let k = j; k < uiHtml.length; k++) {
+    if (uiHtml[k] === '{') depth++;
+    else if (uiHtml[k] === '}') { depth--; if (depth === 0) return uiHtml.slice(i, k + 1); }
+  }
+  throw new Error('fin de ' + name + ' introuvable');
+}
+const UI_PAI = ['gLoc', 'gLog', 'gLogLoc', 'gPai', 'paiDu', 'duMois', 'prorataJours', 'locMoisListe', 'majStatutLoc', 'recalcPai', 'quickPay', 'validerBank', 'addVersement', 'locNom', 'fmt'];
+// Contexte appli : DOM, toasts et sauvegarde neutralisés ; NOW figé au 19/11/2026
+function uiCtx(DB, els = {}) {
+  const c = vm.createContext({ confirm: () => true, toast: () => {}, persist: () => {}, updateNB: () => {}, gPage: () => {}, paiRefresh: () => {}, renderVersModal: () => {},
+    refreshCurrentView: () => {}, requestAnimationFrame: () => {}, uid: () => Math.random().toString(36).slice(2), __els: els,
+    gv: id => (els[id] || {}).value || '', document: { getElementById: id => els[id] || null, querySelector: () => null } });
+  vm.runInContext('var NOW=new Date("2026-11-19T10:00:00Z");var DB;' + UI_PAI.map(extractUI).join('\n'), c);
+  c.__DB = DB; vm.runInContext('DB=this.__DB', c); return c;
+}
+const uiDB = () => ({ logements: [{ id: 'l1', batId: 'b1', ref: 'A1', loyer: 500, charges: 50, statut: 'Occupé' }],
+  locataires: [{ id: 't1', logId: 'l1', prenom: 'Jean', nom: 'Dupont', entree: '2025-01-01' }], paiements: [] });
+
+test('la version affichée par l\'appli (window.APP_VERSION) est celle du worker', () => {
+  const v = src.match(/const APP_VERSION = '([^']+)'/)[1];
+  const u = uiHtml.match(/window\.APP_VERSION='([^']+)'/);
+  assert.ok(u, 'window.APP_VERSION absent de l\'appli'); assert.equal(u[1], v);
+});
+const proSrv = vm.createContext({}), proUI = vm.createContext({});
+vm.runInContext(extract('prorataJours') + '\nthis.f=prorataJours;', proSrv);
+vm.runInContext(extractUI('prorataJours') + '\nthis.f=prorataJours;', proUI);
+test('prorata au jour : entrée/sortie en cours de mois, février bissextile, mois complet (appli et serveur)', () => {
+  [proSrv.f, proUI.f].forEach(f => {
+    near(f(550, '2026-10', '2026-10-16'), 283.87);            // 550 × 16/31
+    near(f(550, '2026-10', '2025-01-01', '2026-10-15'), 266.13); // 550 × 15/31
+    near(f(550, '2028-02', '2028-02-15'), 284.48);            // 550 × 15/29
+    near(f(550, '2026-02', '2026-02-15'), 275);               // 550 × 14/28
+    near(f(550, '2026-11', '2026-10-16'), 550); near(f(0, '2026-10', '2026-10-16'), 0);
+    near(f(550, '2026-11', '2025-01-01', '2026-10-15'), 0);   // après la sortie
+  });
+});
+test('prorata : un mois antérieur à l\'entrée vaut 0 (appli et serveur)', () => {
+  assert.equal(proSrv.f(550, '2026-09', '2026-10-16'), 0, 'serveur');
+  assert.equal(proUI.f(550, '2026-09', '2026-10-16'), 0, 'appli');
+  assert.equal(proSrv.f(550, '2025-12', '2026-01-01'), 0, 'serveur, changement d\'année');
+});
+test('appli « encaisser le reste » : paiement de 300 € saisi sans versements → 550, Payé', () => {
+  const DB = uiDB(); DB.paiements.push({ id: 'pa1', logId: 'l1', mois: '2026-10', montant: 300, date: '2026-10-05', mode: 'Virement', statut: 'Partiel' });
+  uiCtx(DB).quickPay('l1', '2026-10'); const p = DB.paiements[0];
+  assert.equal(p.montant, 550); assert.equal(p.statut, 'Payé');
+});
+test('appli « ajouter un versement » : 250 € sur un paiement de 300 € saisi sans versements → 550, Payé', () => {
+  const DB = uiDB(); DB.paiements.push({ id: 'pa1', logId: 'l1', mois: '2026-10', montant: 300, date: '2026-10-05', mode: 'Virement', statut: 'Partiel' });
+  DB._versLog = 'l1'; DB._versMois = '2026-10';
+  uiCtx(DB, { 'vers-montant': { value: '250' }, 'vers-date': { value: '2026-10-12' }, 'vers-mode': { value: 'Virement' }, 'vers-type': { value: 'Locataire' } }).addVersement();
+  const p = DB.paiements[0]; assert.equal(p.montant, 550); assert.equal(p.statut, 'Payé');
+});
+test('import bancaire : virement 200 € ajouté à la CAF 250 € déjà saisie → 450, Partiel, 2 versements', () => {
+  const DB = uiDB(); DB.paiements.push({ id: 'pa1', logId: 'l1', mois: '2026-10', montant: 250, statut: 'Partiel', versements: [{ montant: 250, type: 'CAF', date: '2026-10-05' }] });
+  const c = uiCtx(DB, { 'tx-0': { checked: true }, 'tx-amt-0': { value: '200' } });
+  c.validerBank(encodeURIComponent(JSON.stringify([{ locataire_id: 't1', montant: 200, date: '2026-10-08' }])), '2026-10', 'releve.csv');
+  const p = DB.paiements[0];
+  assert.equal(p.montant, 450); assert.equal(p.statut, 'Partiel'); assert.equal((p.versements || []).length, 2);
+  c.recalcPai(p); assert.equal(p.montant, 450, 'le virement importé disparaît au recalcul');
+});
+test('appli, arrondi : dû 733,33, versements 212,18 + 521,15 → Payé, 733,33', () => {
+  const DB = uiDB(); DB.logements[0].loyer = 700; DB.logements[0].charges = 33.33;
+  DB.paiements.push({ id: 'pa1', logId: 'l1', mois: '2026-10', montant: 0, statut: 'En attente', versements: [{ montant: 212.18, date: '2026-10-05' }, { montant: 521.15, date: '2026-10-08' }] });
+  uiCtx(DB).recalcPai(DB.paiements[0]); const p = DB.paiements[0];
+  assert.equal(p.statut, 'Payé'); assert.equal(p.montant, 733.33);
+});
+test('appli, révision 500 → 510 : les mois payés 550 avant la révision laissent le locataire à jour', () => {
+  const DB = uiDB(); DB.logements[0].loyer = 510; DB.locataires[0].entree = '2026-07-01';
+  ['2026-07', '2026-08', '2026-09'].forEach((m, i) => DB.paiements.push({ id: 'p' + i, logId: 'l1', mois: m, montant: 550, statut: 'Payé', versements: [{ montant: 550, date: m + '-05' }] }));
+  DB.paiements.push({ id: 'p9', logId: 'l1', mois: '2026-10', montant: 560, statut: 'Payé', versements: [{ montant: 560, date: '2026-10-05' }] });
+  const loc = DB.locataires[0]; uiCtx(DB).majStatutLoc(loc);
+  assert.equal(loc.statutPaiement, 'À jour');
+});
+
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed ? 1 : 0);
