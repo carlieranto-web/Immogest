@@ -400,5 +400,122 @@ await test('délai de restitution du dépôt de garantie : fin de mois (31/12 �
   assert.match(a1, /2027-01-31/); assert.match(a1, /2027-02-28/);
   assert.match(a2, /2026-02-28/); assert.match(a2, /2026-03-31/);
 });
+// ── Non-régression audit sécurité / fiabilité (v152)
+const sess = async (s, role = 'owner', extra) => s.newSession(role, 'test', extra);
+const call = (s, tok, u, o = {}) => s.fetch(new Request('https://x' + u, Object.assign({}, o, { headers: Object.assign({ Authorization: 'Bearer ' + tok }, o.headers || {}) })));
+await test('connecteur : les balises < > sont retirées des noms écrits (enregistrer_locataire, projet, bail pré-rempli)', async () => {
+  const s = store(); await s.putData({batiments:[{id:'b1',nom:'A',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Apt 1',loyer:500,charges:50,statut:'Vacant',_ts:1}],locataires:[]});
+  await s.mcpCall('enregistrer_locataire',{lot:'Apt 1',prenom:'<b>Jean</b>',nom:'<img src=x onerror=alert(1)>Dupont',email:'a@b.fr'},'https://x');
+  const loc = (await s.getData()).locataires[0];
+  assert.ok(!/[<>]/.test(loc.prenom + loc.nom), 'balise conservée : ' + loc.prenom + ' ' + loc.nom);
+  await s.mcpCall('preparer_bail',{lot:'Apt 1',prenom:'<svg onload=alert(1)>',nom:'X'},'https://x');
+  assert.ok(!/[<>]/.test(JSON.stringify((await s.getData()).logements[0].bailPrefill)));
+  await s.mcpCall('enregistrer_projet',{nom:'<script>x</script>',lots:[{nom:'<i>T2</i>'}]},'https://x');
+  const pj = (await s.getData()).projets[0]; assert.ok(!/[<>]/.test(pj.nom + pj.lots[0].n));
+});
+await test('coffre : type réel lu dans le fichier, HTML/SVG jamais servi en ligne (pièce jointe, sandbox, nosniff)', async () => {
+  const s = store(); const tok = await sess(s);
+  const up = async (body, type, cat = 'Autre', name = 'x') => (await call(s, tok, '/api/files/upload', { method: 'POST', body, headers: { 'Content-Type': type, 'X-File-Name': name, 'X-Cat': cat } })).json();
+  const h = await up(new TextEncoder().encode('<html><script>alert(document.cookie)</script></html>'), 'text/html', 'Autre', 'piege.html');
+  assert.equal(h.ok, true); assert.equal(h.file.type, 'application/octet-stream', 'type annoncé text/html accepté tel quel');
+  const png = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]);
+  const p = await up(png, 'text/html', 'Autre', 'image.png'); assert.equal(p.file.type, 'image/png');
+  const svg = await call(s, tok, '/api/files/upload', { method: 'POST', body: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>'), headers: { 'Content-Type': 'image/svg+xml', 'X-File-Name': 'p.svg', 'X-Cat': 'Photo', 'X-Log-Id': 'l1' } });
+  assert.equal(svg.status, 415, 'photo SVG acceptée');
+  const link = async id => (await (await call(s, tok, '/api/files/' + id + '/link', { method: 'POST', body: '{}' })).json()).url;
+  const rh = await s.fetch(new Request('https://x' + await link(h.file.id)));
+  assert.match(rh.headers.get('Content-Disposition') || '', /^attachment/); assert.match(rh.headers.get('Content-Security-Policy') || '', /sandbox/);
+  assert.equal(rh.headers.get('X-Content-Type-Options'), 'nosniff'); assert.ok(!/html/.test(rh.headers.get('Content-Type')));
+  // un fichier ancien enregistré avec le type annoncé text/html reste neutralisé à la lecture
+  const m = await s.storage.get('fm:' + h.file.id); m.type = 'text/html'; await s.storage.put('fm:' + h.file.id, m);
+  const r2 = await s.fetch(new Request('https://x' + await link(h.file.id))); assert.ok(!/html/.test(r2.headers.get('Content-Type'))); assert.match(r2.headers.get('Content-Disposition'), /^attachment/);
+  const raw = await call(s, tok, '/api/files/' + h.file.id + '/raw'); assert.ok(!/html/.test(raw.headers.get('Content-Type'))); assert.match(raw.headers.get('Content-Security-Policy') || '', /sandbox/);
+  const rp = await s.fetch(new Request('https://x' + await link(p.file.id)));
+  assert.equal(rp.headers.get('Content-Type'), 'image/png'); assert.match(rp.headers.get('Content-Disposition'), /^inline/);
+});
+await test('accès banquier masqué : ni bail pré-rempli, ni futur locataire, ni ancien locataire, ni RIB', async () => {
+  const s = store();
+  await s.putData({scis:[{id:'s1',nom:'SCI A',iban:'FR7630001007941234567890185',bic:'BDFEFRPP',ribFileId:'f1'}],batiments:[{id:'b1',nom:'A',sciId:'s1'}],
+    logements:[{id:'l1',batId:'b1',ref:'Apt 1',loyer:500,entreePrevue:'2026-12-01',entreePrevueNom:'Marie Futur',bailPrefill:{l1Nom:'FUTUR',l1Naiss:'1990-01-01',l1Email:'m@f.fr',l1Tel:'0600000000'}}],
+    locataires:[{id:'t1',logId:'l1',prenom:'Jean',nom:'Dupont',email:'j@d.fr',tel:'0611',naissance:'1980-02-02',lieuNaissance:'Brest'}],
+    paiements:[{id:'p1',logId:'l1',mois:'2026-01',montant:500,statut:'Payé',locNom:'Paul Ancien',ancId:'anc1'}]});
+  const tok = await sess(s, 'viewer', { mask: true });
+  const d = (await (await call(s, tok, '/api/data')).json()).data, txt = JSON.stringify(d);
+  ['FUTUR', 'Marie Futur', 'Paul Ancien', 'Dupont', '1980-02-02', 'Brest', 'j@d.fr', '0611', 'm@f.fr', 'FR7630001007941234567890185', 'BDFEFRPP'].forEach(x => assert.ok(!txt.includes(x), 'exposé : ' + x));
+  assert.equal(d.paiements[0].montant, 500); assert.equal(d.logements[0].entreePrevue, '2026-12-01');
+  const tok2 = await sess(s, 'viewer', { mask: false }), d2 = JSON.stringify((await (await call(s, tok2, '/api/data')).json()).data);
+  ['FUTUR', '1980-02-02', 'j@d.fr', 'FR7630001007941234567890185'].forEach(x => assert.ok(!d2.includes(x), 'exposé (non masqué) : ' + x));
+});
+await test('Face ID : un gestionnaire ne peut pas retirer celui du propriétaire', async () => {
+  const s = store(); await s.storage.put('wa:creds', [{ id: 'cOwner', role: 'owner' }, { id: 'cMgr', role: 'manager' }]);
+  const tok = await sess(s, 'manager'), key = [...(await s.storage.list({ prefix: 'sess:' })).keys()][0].slice(5, 17);
+  const r = await call(s, tok, '/api/devices/revoke', { method: 'POST', body: JSON.stringify({ id: key, faceid: 'cOwner' }) });
+  assert.equal(r.status, 403); assert.ok((await s.storage.get('wa:creds')).some(c => c.id === 'cOwner'), 'Face ID du propriétaire supprimé');
+  const r2 = await call(s, tok, '/api/devices/revoke', { method: 'POST', body: JSON.stringify({ faceid: 'cMgr' }) });
+  assert.equal(r2.status, 200); assert.ok(!(await s.storage.get('wa:creds')).some(c => c.id === 'cMgr'));
+});
+await test('OAuth : la page du PIN affiche l\'hôte qui recevra l\'accès (alerte si inhabituel)', async () => {
+  const s = store();
+  const reg = async u => (await (await s.fetch(new Request('https://x/oauth/register', { method: 'POST', body: JSON.stringify({ client_name: 'Claude', redirect_uris: [u] }) }))).json()).client_id;
+  const page = async (cid, u) => (await s.fetch(new Request('https://x/oauth/authorize?response_type=code&code_challenge=abc&code_challenge_method=S256&client_id=' + cid + '&redirect_uri=' + encodeURIComponent(u)))).text();
+  const ev = await page(await reg('https://evil.example/cb'), 'https://evil.example/cb');
+  assert.match(ev, /evil\.example/); assert.match(ev, /inhabituelle/);
+  const ok = await page(await reg('https://claude.ai/api/mcp/auth_callback'), 'https://claude.ai/api/mcp/auth_callback');
+  assert.match(ok, /claude\.ai/); assert.ok(!/inhabituelle/.test(ok));
+});
+await test('synchro : un _ts ou une suppression datés dans le futur sont ramenés à maintenant', async () => {
+  const s = store(); const tok = await sess(s); const fut = Date.now() + 1e11;
+  await s.putData({ batiments: [{ id: 'b1', nom: 'A', _ts: 1 }, { id: 'b2', nom: 'B', _ts: 1 }], logements: [] });
+  const put = async data => (await (await call(s, tok, '/api/data', { method: 'PUT', body: JSON.stringify({ data }) })).json()).data;
+  const d = await put({ batiments: [{ id: 'b1', nom: 'futur', _ts: fut }], tomb: { b2: fut }, settings: { x: 1, _ts: fut } });
+  assert.ok(d.batiments.find(b => b.id === 'b1')._ts <= Date.now() + 1000); assert.ok(d.tomb.b2 <= Date.now() + 1000); assert.ok(d.settings._ts <= Date.now() + 1000);
+  const d2 = await put({ batiments: [{ id: 'b1', nom: 'corrigé', _ts: Date.now() + 5 }, { id: 'b2', nom: 'recréé', _ts: Date.now() + 5 }] });
+  assert.equal(d2.batiments.find(b => b.id === 'b1').nom, 'corrigé'); assert.ok(d2.batiments.find(b => b.id === 'b2'), 'b2 bloqué par une suppression future');
+});
+await test('restauration : grosse base (> 1,9 Mo compressée) → copie d\'avant découpée et vraiment annulable', async () => {
+  const s = store(); const big = []; for (let i = 0; i < 2600; i++) big.push({ id: 'pa' + i, n: [...crypto.getRandomValues(new Uint8Array(800))].map(x => x.toString(36)).join('') });
+  await s.putData({ batiments: [{ id: 'b1' }], logements: [], paiements: big });
+  const r = await s.restoreData({ batiments: [{ id: 'b1' }], logements: [] });
+  if (r.annulable) {
+    const v = await s.storage.get(r.annulable); assert.ok(v, 'copie annoncée mais absente');
+    let gz; if (v && v.chunks) { const parts = []; for (let i = 0; i < v.chunks; i++) parts.push(new Uint8Array(await s.storage.get('bkprec:' + r.annulable.slice(6) + ':' + i))); gz = Buffer.concat(parts); } else gz = Buffer.from(v);
+    const back = JSON.parse(await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).text());
+    assert.equal(back.paiements.length, 2600);
+  }
+  assert.equal([...(await s.storage.list({ prefix: 'bkpre:' })).keys()].length, r.annulable ? 1 : 0);
+});
+await test('calculer : virgule décimale avec « ; » comme séparateur (max(1,5;2) = 2)', async () => {
+  const E = W.makeEngine({ batiments: [], logements: [], locataires: [], paiements: [], prets: [], charges: [], scis: [], settings: {} }, new Date());
+  assert.equal(E.AI_FN.calculer({ expression: 'max(1,5;2)' }).resultat, 2);
+  assert.equal(E.AI_FN.calculer({ expression: 'round(2,345;2)' }).resultat, 2.35);
+  assert.equal(E.AI_FN.calculer({ expression: 'max(1,5)' }).resultat, 5); assert.equal(E.AI_FN.calculer({ expression: '1,5*2' }).resultat, 3);
+});
+await test('outils de calcul : dates impossibles, périodes inversées, différé ≥ durée refusés ; prorata d\'occupation à 4 décimales', async () => {
+  const E = W.makeEngine({ batiments: [], logements: [], locataires: [], paiements: [], prets: [], charges: [], scis: [], settings: {} }, new Date()), F = E.AI_FN;
+  assert.throws(() => F.prorata_loyer({ mois: '2026-02', date_entree: '2026-02-30', loyer_hc: 500 }), /impossible/);
+  assert.throws(() => F.prorata_loyer({ date_entree: '2026-10-20', date_sortie: '2026-10-10', loyer_hc: 500 }), /antérieure/);
+  assert.throws(() => F.prorata_loyer({ mois: '2026-13', loyer_hc: 500 }), /AAAA-MM/);
+  near(F.prorata_loyer({ mois: '2026-10', date_entree: '2026-10-16', loyer_hc: 550 }).loyer_prorata, 283.87);
+  assert.throws(() => F.regularisation_charges({ periode_debut: '2026-12-31', periode_fin: '2026-01-01', depenses: [] }), /inversée/);
+  assert.throws(() => F.regularisation_charges({ periode_debut: '2026-01-01', periode_fin: '2026-12-31', occupation_debut: '2026-09-01', occupation_fin: '2026-03-01', depenses: [] }), /inversée/);
+  assert.throws(() => F.regularisation_charges({ periode_debut: '2026-02-30', periode_fin: '2026-12-31', depenses: [] }), /impossible/);
+  const rg = F.regularisation_charges({ periode_debut: '2026-01-01', periode_fin: '2026-01-03', occupation_debut: '2026-01-03', depenses: [{ libelle: 'Eau', montant_total: 90 }] });
+  assert.equal(rg.detail[0].prorata_occupation, 0.3333);
+  assert.throws(() => F.calcul_pret({ capital: 100000, taux_annuel_pct: 4, duree_mois: 240, differe_mois: 240 }), /différé/);
+  assert.throws(() => F.calcul_pret({ capital: -5, taux_annuel_pct: 4, duree_mois: 240 }), /positifs/);
+  assert.ok(isFinite(F.calcul_pret({ capital: 100000, taux_annuel_pct: 4, duree_mois: 240, differe_mois: 12 }).mensualite_hors_assurance));
+});
+await test('totaux : un loyer ou un taux manquant ne rend pas tout le portefeuille NaN', async () => {
+  const d = { scis: [], batiments: [{ id: 'b1', nom: 'A' }], logements: [{ id: 'l1', batId: 'b1', ref: 'A1', loyer: 500, statut: 'Occupé' }, { id: 'l2', batId: 'b1', ref: 'A2', statut: 'Vacant' }],
+    locataires: [], paiements: [], charges: [], prets: [{ id: 'p1', batId: 'b1', capital: 120000, duree: 240, debut: '2024-01-05' }], settings: {} };
+  const f = W.makeEngine(d, new Date('2026-11-19T10:00:00Z')).portfolioFin(d.batiments);
+  near(f.loyMax, 6000); assert.ok(isFinite(f.credR) && f.credR > 0 && f.credR < 120000, 'capital restant dû : ' + f.credR); assert.ok(isFinite(f.debt) && f.debt > 0, 'annuités : ' + f.debt);
+});
+await test('révision IRL : rappel conforme à l\'art. 17-1 (pas de rétroactivité, demande du bailleur, délai d\'un an)', async () => {
+  const E = W.makeEngine({ batiments: [], logements: [], locataires: [], paiements: [], prets: [], charges: [], scis: [], settings: {} }, new Date());
+  const r = E.AI_FN.revision_irl({ loyer_actuel_hc: 500, trimestre_reference: 'T2 2024' });
+  if (r.rappel) { assert.ok(!/au-delà d'un an/.test(r.rappel.split('Aucun effet')[0]) && !/rétroactif au-delà/.test(r.rappel), r.rappel); assert.match(r.rappel, /17-1/); assert.match(r.rappel, /demande du bailleur/); }
+  else assert.ok(/17-1/.test(src) && !/sans effet rétroactif au-delà d\\'un an/.test(src));
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
