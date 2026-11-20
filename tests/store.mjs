@@ -192,7 +192,8 @@ await test('modifier_ancien_locataire : corrige le dépôt de garantie et la res
   let a=(await s.getData()).anciens[0]; assert.equal(a.depot,360); assert.equal(a.depotRendu,undefined);
   await s.mcpCall('modifier_ancien_locataire',{id:'an1',caution_restituee:true,date_restitution:'2026-11-25'},'https://x');
   a=(await s.getData()).anciens[0]; assert.equal(a.depotRendu,360); assert.equal(a.depotDate,'2026-11-25');
-  await assert.rejects(s.mcpCall('modifier_ancien_locataire',{id:'an1',montant_restitue:400},'https://x'),/dépasse/);
+  await s.mcpCall('modifier_ancien_locataire',{id:'an1',montant_restitue:400,date_restitution:'2026-11-25'},'https://x');
+  a=(await s.getData()).anciens[0]; assert.equal(a.depotRendu,400,'restitution > dépôt autorisée (prorata de loyer remboursé)');
   await s.mcpCall('modifier_ancien_locataire',{id:'an1',caution_restituee:false},'https://x');
   a=(await s.getData()).anciens[0]; assert.equal(a.depotRendu,undefined);
 });
