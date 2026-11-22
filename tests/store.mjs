@@ -655,5 +655,44 @@ await test('enregistrer_locataire : 1er mois au prorata (loyer + charges) à l\'
   const n=d.paiements.find(x=>x.id==='p11'); assert.equal(n.du,550); assert.equal(n.prorata,false);
   r=(await s.mcpCall('liste_locataires',{},'https://x')).lots[0].locataire; assert.equal(r.du_mois_entree,null);
 });
+await test('supprimer_locataire : fiche vide supprimée avec tombstone, paiements intacts, pas de résurrection par un appareil resté sur l\'ancienne copie', async () => {
+  const s = store(); const tok = await sess(s);
+  const vide = {id:'locvf0o69xt',logId:'l-atria-s4',prenom:'',nom:'',entree:'',_ts:5};
+  const data = {batiments:[{id:'b1',nom:'Lannion',_ts:1}],
+    logements:[{id:'l-atria-s4',batId:'b1',ref:'Studio 4',type:'Studio',surface:18,dpe:'D',loyer:380,charges:20,statut:'Vacant',_ts:1},{id:'l2',batId:'b1',ref:'Studio 2',type:'Studio',surface:20,dpe:'D',loyer:400,charges:20,statut:'Occupé',_ts:1}],
+    locataires:[vide,{id:'c2',logId:'l2',prenom:'Jean',nom:'Dupont',entree:'2026-09-01',depot:400,_ts:1}],
+    paiements:[{id:'p0',logId:'l-atria-s4',mois:'2026-08',montant:300,ancId:'anc1',statut:'Payé',_ts:1},{id:'p1',logId:'l-atria-s4',mois:'2026-10',montant:0,statut:'En attente',_ts:1},{id:'p2',logId:'l2',mois:'2026-10',montant:420,statut:'Payé',_ts:1}]};
+  await s.putData(JSON.parse(JSON.stringify(data)));
+  const c = (await s.mcpCall('controle_donnees',{},'https://x')).points;
+  const pv = c.find(p => /fiche locataire vide/.test(p.probleme));
+  assert.ok(pv, 'fiche vide non signalée'); assert.equal(pv.gravite, 'bloquant'); assert.equal(pv.lot, 'Studio 4'); assert.match(pv.probleme, /locvf0o69xt/); assert.match(pv.correction, /supprimer_locataire/);
+  await assert.rejects(s.mcpCall('supprimer_locataire',{locataire_id:'locvf0o69xt'},'https://x'), /non confirmée/);
+  await assert.rejects(s.mcpCall('supprimer_locataire',{locataire_id:'locvf0o69xt',confirmer:'true'},'https://x'), /non confirmée/, 'confirmer doit être le booléen true');
+  await assert.rejects(s.mcpCall('supprimer_locataire',{locataire_id:'inconnu',confirmer:true},'https://x'), /introuvable/);
+  await assert.rejects(s.mcpCall('supprimer_locataire',{locataire_id:'c2',confirmer:true},'https://x'), /archiver/, 'locataire réel avec paiements : refus sans forcer');
+  assert.equal((await s.getData()).locataires.length, 2, 'rien supprimé par un appel refusé');
+  const r = await s.mcpCall('supprimer_locataire',{locataire_id:'locvf0o69xt',confirmer:true},'https://x');
+  assert.equal(r.ok, true); assert.equal(r.supprime.lot, 'Studio 4'); assert.equal(r.supprime.batiment, 'Lannion'); assert.match(r.supprime.nom, /fiche vide/); assert.equal(r.paiements_conserves, 2);
+  let d = await s.getData();
+  assert.ok(!d.locataires.some(x => x.id === 'locvf0o69xt')); assert.ok(d.tomb.locvf0o69xt >= 5, 'tombstone absente');
+  assert.deepEqual(d.paiements, data.paiements, 'aucun paiement ne doit être modifié');
+  assert.ok(!W.mergeDB(d, {locataires:[vide], tomb:{}}).locataires.some(x => x.id === 'locvf0o69xt'), 'mergeDB ressuscite la fiche');
+  const put = async x => (await (await call(s, tok, '/api/data', { method: 'PUT', body: JSON.stringify({ data: x }) })).json()).data;
+  d = await put(JSON.parse(JSON.stringify(data))); // appareil resté sur l'ancienne copie
+  assert.ok(!d.locataires.some(x => x.id === 'locvf0o69xt'), 'la synchro d\'un ancien appareil ressuscite la fiche'); assert.ok(d.locataires.some(x => x.id === 'c2'));
+  assert.ok(!JSON.stringify((await s.mcpCall('controle_donnees',{},'https://x')).points).includes('fiche locataire vide'));
+  const f = await s.mcpCall('supprimer_locataire',{locataire_id:'c2',confirmer:true,forcer:true},'https://x');
+  assert.equal(f.supprime.nom, 'Jean Dupont'); assert.equal(f.supprime.paiements_encaisses_depuis_entree, 1); assert.match(f.note, /Occupé/);
+  d = await s.getData(); assert.equal(d.locataires.length, 0); assert.equal(d.paiements.length, 3);
+});
+await test('supprimer_locataire : outil d\'écriture déclaré (accord explicite, confirmer obligatoire) et locataire sur lot vacant signalé', async () => {
+  const m = src.match(/\{name:'supprimer_locataire',description:'(?:[^'\\]|\\.)*'/); assert.ok(m, 'outil absent');
+  assert.match(m[0], /^\{name:'supprimer_locataire',description:'ÉCRITURE : /); assert.match(m[0], /n\\'utiliser qu\\'après accord explicite de l\\'utilisateur/);
+  assert.match(src, /supprimer_locataire[^\n]*required:\['locataire_id','confirmer'\]/);
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Studio 3',surface:18,dpe:'D',loyer:380,statut:'Travaux',_ts:1}],locataires:[{id:'c1',logId:'l1',prenom:'Anne',nom:'Le Goff',entree:'2025-01-01',depot:300,_ts:1}]});
+  const p = (await s.mcpCall('controle_donnees',{},'https://x')).points.find(x => /encore rattaché/.test(x.probleme));
+  assert.ok(p); assert.match(p.probleme, /Anne Le Goff/); assert.match(p.correction, /libérer le lot/); assert.match(p.correction, /Occupé/);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);

@@ -607,5 +607,29 @@ test('Loyers du mois : ligne et totaux d\'immeuble au dû du mois d\'entrée (pr
   assert.ok(/entreeAppliquer\(nl,''\)/.test(extractUI('activateBail')), 'activation du bail : 1er mois au prorata');
   assert.ok(/Premier mois \(période '\+qPeriodeJours\(ms/.test(extractUI('buildBailHTML')), 'bail : montant du 1er mois au prorata');
 });
+test('fiche locataire : delLoc supprime une fiche vide (tombstone, paiements intacts) ; locataire réel avec paiements → « Départ / archiver » conseillé, double confirmation', () => {
+  assert.ok(uiHtml.indexOf('function locPaiEncaisses(') >= 0 && uiHtml.slice(uiHtml.indexOf('function locPaiEncaisses(')).startsWith(extract('locPaiEncaisses')), 'locPaiEncaisses diffère entre appli et serveur');
+  const mk = (rep) => { const msgs = [], calls = [];
+    const c = vm.createContext({ confirm: m => { msgs.push(m); return rep.length ? rep.shift() : true; }, toast: m => calls.push('toast:' + m), persist: () => calls.push('persist'), updateNB: () => {}, buildSidebar: () => {},
+      refreshCurrentView: () => calls.push('refresh'), goLog: id => calls.push('goLog:' + id), gPage: p => calls.push('gPage:' + p), cM: () => {}, _VIEWMODE: false });
+    vm.runInContext('var DB;' + ['gLoc', 'gLog', 'locNom', 'tomb', 'locPaiEncaisses', 'delLoc'].map(extractUI).join('\n'), c);
+    c.__DB = { _tomb: {}, _cv: { type: 'loc', id: 'locvf0o69xt' }, logements: [{ id: 'l-atria-s4', ref: 'Studio 4', statut: 'Vacant' }, { id: 'l2', ref: 'Studio 2', statut: 'Occupé' }],
+      locataires: [{ id: 'locvf0o69xt', logId: 'l-atria-s4', prenom: '', nom: '', entree: '', _ts: Date.now() + 60000 }, { id: 'c2', logId: 'l2', prenom: 'Jean', nom: 'Dupont', entree: '2026-09-01', _ts: 1 }],
+      paiements: [{ id: 'p0', logId: 'l-atria-s4', mois: '2026-08', montant: 300, ancId: 'anc1' }, { id: 'p2', logId: 'l2', mois: '2026-10', montant: 420 }, { id: 'p3', logId: 'l2', mois: '2026-08', montant: 400 }] };
+    vm.runInContext('DB=this.__DB', c); return { c, msgs, calls, DB: c.__DB }; };
+  let x = mk([]); const pais = JSON.stringify(x.DB.paiements);
+  x.c.delLoc('locvf0o69xt');
+  assert.equal(x.msgs.length, 1); assert.match(x.msgs[0], /fiche locataire vide \(lot Studio 4\)/);
+  assert.ok(!x.DB.locataires.some(l => l.id === 'locvf0o69xt')); assert.ok(x.DB._tomb.locvf0o69xt > Date.now() + 50000, 'tombstone antérieure à la date de la fiche (_ts) : la fusion la ressusciterait');
+  assert.equal(JSON.stringify(x.DB.paiements), pais, 'paiements modifiés'); assert.ok(x.calls.includes('persist')); assert.ok(x.calls.includes('goLog:l-atria-s4'));
+  x = mk([false]); x.c.delLoc('c2');
+  assert.equal(x.msgs.length, 1); assert.match(x.msgs[0], /Départ \/ archiver/); assert.match(x.msgs[0], /1 paiement\(s\) encaissé\(s\)/, 'seuls les paiements depuis l\'entrée comptent');
+  assert.equal(x.DB.locataires.length, 2); assert.ok(!x.calls.includes('persist'));
+  x = mk([true, false]); x.c.delLoc('c2'); assert.equal(x.msgs.length, 2); assert.equal(x.DB.locataires.length, 2, 'supprimé sans la 2e confirmation');
+  x = mk([true, true]); x.DB._cv = { type: 'log', id: 'l2' }; x.c.delLoc('c2');
+  assert.ok(!x.DB.locataires.some(l => l.id === 'c2')); assert.ok(x.DB._tomb.c2 >= 1); assert.equal(x.DB.paiements.length, 3); assert.ok(x.calls.includes('refresh'));
+  assert.match(uiHtml, /onclick="delLoc\(DB\._editLocId\)">🗑 Supprimer la fiche<\/button>/, 'bouton absent du formulaire locataire');
+  assert.match(extractUI('rLocDetail'), /delLoc\(/, 'bouton absent de la fiche locataire'); assert.match(extractUI('rLogDetail'), /delLoc\(/, 'bouton absent de la fiche logement');
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed ? 1 : 0);
