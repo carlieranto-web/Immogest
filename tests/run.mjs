@@ -25,6 +25,9 @@ const ctx = vm.createContext({});
 vm.runInContext(['const ARR_KEYS=' + arrKeys + ';', extract('projCalc'), extract('mergeArr'), extract('mergeDB'),
   'this.projCalc=projCalc;this.mergeDB=mergeDB;this.ARR_KEYS=ARR_KEYS;'].join('\n'), ctx);
 const { projCalc, mergeDB, ARR_KEYS } = ctx;
+const ctx2 = vm.createContext({});
+vm.runInContext([extract('prorataJours'), extract('prorataDetail'), 'this.prorataJours=prorataJours;'].join('\n'), ctx2);
+const { prorataJours } = ctx2;
 
 // ── Simulateur : cas réel Charbonnerie (valeurs du 13/10/2026)
 const charbo = { prix: 77000, notaire: 8, impr: 0, apport: 0, taux: 4.2, duree: 20, tf: 4000, pno: 600, gest: 4, vac: 0, entr: 0, cible: 10,
@@ -34,6 +37,13 @@ const charbo = { prix: 77000, notaire: 8, impr: 0, apport: 0, taux: 4.2, duree: 
 test('prix de revient = prix + notaire + travaux', () => {
   const c = projCalc(charbo);
   near(c.frais_notaire, 6160); near(c.travaux_total, 175000); near(c.prix_de_revient, 258160); near(c.surface, 171.22);
+});
+test('Prorata : 1er mois d\'un nouveau locataire, loyer + charges', () => {
+  near(prorataJours(430, '2026-11', '2026-11-17', ''), 200.67); // Studio 5 Lannion : 14 jours / 30
+  near(prorataJours(440, '2026-11', '2026-11-20', ''), 161.33); // Studio A Lannion : 11 jours / 30
+  near(prorataJours(430, '2026-11', '2026-11-01', ''), 430);    // entrée le 1er : loyer plein
+  near(prorataJours(430, '2026-12', '2026-11-17', ''), 430);    // mois suivant : loyer plein
+  near(prorataJours(310, '2027-02', '2027-02-15', ''), 155);    // février : 14 jours / 28
 });
 test('Simulateur : % travaux en plus par lot et global', () => {
   const c = projCalc({ prix: 100000, notaire: 8, impr: 10, lots: [{ s: 40, l: 500, w: 20000, wp: 25 }, { s: 30, l: 400, w: 10000 }], pcs: [{ m: 5000 }] });
@@ -583,6 +593,19 @@ await atest('contrôle de syntaxe : chaque <script> de l\'interface et worker.js
   const { spawnSync } = await import('node:child_process');
   const r = spawnSync(process.execPath, [new URL('./check-ui.mjs', import.meta.url).pathname], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+test('Loyers du mois : ligne et totaux d\'immeuble au dû du mois d\'entrée (prorata loyer + charges), activation du bail et bail au prorata', () => {
+  const DB = uiDB(); DB.locataires[0].entree = '2026-10-16';
+  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'prorataJours', 'qMoisFin', 'qMoisLabel', 'qPerMois', 'eur2', 'fmt', 'lrDu', 'lrAmtHtml', 'duHC'], DB);
+  const r = { l: DB.logements[0], loc: DB.locataires[0], pai: null, status: 'late' };
+  near(c.lrDu(r, '2026-10'), 283.87); const h = c.lrAmtHtml(r, '2026-10');
+  assert.ok(h.includes('prorata entrée 16/10') && /= 283,87/.test(h.replace(/\s/g, ' ')), h);
+  assert.ok(/258,06/.test(h.replace(/\s/g, ' ')) && /25,81/.test(h.replace(/\s/g, ' ')), 'loyer et charges répartis : ' + h);
+  assert.ok(!/prorata/.test(c.lrAmtHtml(r, '2026-11')), 'mois suivant : loyer plein');
+  r.pai = { logId: 'l1', mois: '2026-10', du: 300, montant: 100 }; assert.equal(c.lrDu(r, '2026-10'), 300, 'dû figé à l\'encaissement prioritaire');
+  const rl = extractUI('rLoyers'); assert.ok(rl.includes('a+lrDu(r,ms)') && rl.includes('duHC(r.l,lrDu(r,ms))'), 'totaux d\'immeuble au dû du mois');
+  assert.ok(/entreeAppliquer\(nl,''\)/.test(extractUI('activateBail')), 'activation du bail : 1er mois au prorata');
+  assert.ok(/Premier mois \(période '\+qPeriodeJours\(ms/.test(extractUI('buildBailHTML')), 'bail : montant du 1er mois au prorata');
 });
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed ? 1 : 0);

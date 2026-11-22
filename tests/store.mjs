@@ -640,5 +640,20 @@ await test('page de l\'appli : HEAD sans corps avec X-App-Version, ETag = versio
   const n = await W.default.fetch(new Request('https://x/', { headers: { 'If-None-Match': 'W/"' + v + '"' } }), {}); assert.equal(n.status, 304); assert.equal(await n.text(), ''); assert.equal(n.headers.get('X-App-Version'), v);
   const o = await W.default.fetch(new Request('https://x/', { headers: { 'If-None-Match': '"immogest-v1"' } }), {}); assert.equal(o.status, 200);
 });
+await test('enregistrer_locataire : 1er mois au prorata (loyer + charges) à l\'entrée, annulé si la date d\'entrée change de mois', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Studio 5',loyer:500,charges:50,statut:'Vacant',_ts:1}],locataires:[],
+    paiements:[{id:'p10',logId:'l1',mois:'2026-10',montant:0,statut:'En attente',versements:[],_ts:1},{id:'p11',logId:'l1',mois:'2026-11',montant:0,statut:'En attente',versements:[],_ts:1},{id:'pa',logId:'l1',mois:'2026-10',montant:266.13,du:266.13,ancId:'anc1',statut:'Payé',_ts:1}]});
+  await s.mcpCall('enregistrer_locataire',{lot:'l1',prenom:'Jean',nom:'Dupont',date_entree:'2026-10-16'},'https://x');
+  let d=await s.getData(),p=d.paiements.find(x=>x.id==='p10');
+  assert.equal(p.du,283.87); assert.equal(p.duEntree,true); assert.equal(p.prorata,true); assert.ok(p._ts>1);
+  const a=d.paiements.find(x=>x.id==='pa'); assert.equal(a.du,266.13,'paiement de l\'ancien locataire ignoré'); assert.equal(a._ts,1);
+  let r=(await s.mcpCall('liste_locataires',{},'https://x')).lots[0].locataire; assert.deepEqual(r.du_mois_entree,{mois:'2026-10',du:283.87,loyer_plein:550});
+  const id=d.locataires[0].id;
+  await s.mcpCall('enregistrer_locataire',{lot:'l1',locataire_id:id,date_entree:'2026-11-01'},'https://x');
+  d=await s.getData(); p=d.paiements.find(x=>x.id==='p10'); assert.equal(p.du,undefined); assert.equal(p.duEntree,undefined);
+  const n=d.paiements.find(x=>x.id==='p11'); assert.equal(n.du,550); assert.equal(n.prorata,false);
+  r=(await s.mcpCall('liste_locataires',{},'https://x')).lots[0].locataire; assert.equal(r.du_mois_entree,null);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
