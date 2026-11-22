@@ -45,6 +45,13 @@ test('Prorata : 1er mois d\'un nouveau locataire, loyer + charges', () => {
   near(prorataJours(430, '2026-12', '2026-11-17', ''), 430);    // mois suivant : loyer plein
   near(prorataJours(310, '2027-02', '2027-02-15', ''), 155);    // février : 14 jours / 28
 });
+test('Simulateur : fourchette basse des loyers', () => {
+  const base = { prix: 100000, notaire: 8, impr: 0, taux: 4.2, duree: 20, tf: 1000, pno: 500, gest: 4, vac: 5, entr: 5, lots: [{ s: 30, l: 500, lb: 450, w: 10000 }, { s: 30, l: 400, w: 10000 }] };
+  const c = projCalc(base);
+  near(c.loyers_mensuels, 900); near(c.fourchette_basse.loyers_mensuels, 850); // lot sans loyer bas : loyer normal repris
+  near(c.fourchette_basse.cash_flow_an, 850 * 12 - c.annuite - 500 - 1000 - 850 * 12 * 0.04);
+  assert.equal(projCalc({ lots: [{ l: 500 }] }).fourchette_basse, null);
+});
 test('Simulateur : % travaux en plus par lot et global', () => {
   const c = projCalc({ prix: 100000, notaire: 8, impr: 10, lots: [{ s: 40, l: 500, w: 20000, wp: 25 }, { s: 30, l: 400, w: 10000 }], pcs: [{ m: 5000 }] });
   near(c.travaux_lots_hors_majoration, 30000); near(c.majoration_lots, 5000); near(c.travaux_lots, 35000);
