@@ -25,6 +25,9 @@ const ctx = vm.createContext({});
 vm.runInContext(['const ARR_KEYS=' + arrKeys + ';', extract('projCalc'), extract('mergeArr'), extract('mergeDB'),
   'this.projCalc=projCalc;this.mergeDB=mergeDB;this.ARR_KEYS=ARR_KEYS;'].join('\n'), ctx);
 const { projCalc, mergeDB, ARR_KEYS } = ctx;
+const ctx2 = vm.createContext({});
+vm.runInContext([extract('prorataJours'), extract('prorataDetail'), 'this.prorataJours=prorataJours;'].join('\n'), ctx2);
+const { prorataJours } = ctx2;
 
 // ── Simulateur : cas réel Charbonnerie (valeurs du 13/10/2026)
 const charbo = { prix: 77000, notaire: 8, impr: 0, apport: 0, taux: 4.2, duree: 20, tf: 4000, pno: 600, gest: 4, vac: 0, entr: 0, cible: 10,
@@ -34,6 +37,13 @@ const charbo = { prix: 77000, notaire: 8, impr: 0, apport: 0, taux: 4.2, duree: 
 test('prix de revient = prix + notaire + travaux', () => {
   const c = projCalc(charbo);
   near(c.frais_notaire, 6160); near(c.travaux_total, 175000); near(c.prix_de_revient, 258160); near(c.surface, 171.22);
+});
+test('Prorata : 1er mois d\'un nouveau locataire, loyer + charges', () => {
+  near(prorataJours(430, '2026-11', '2026-11-17', ''), 200.67); // Studio 5 Lannion : 14 jours / 30
+  near(prorataJours(440, '2026-11', '2026-11-20', ''), 161.33); // Studio A Lannion : 11 jours / 30
+  near(prorataJours(430, '2026-11', '2026-11-01', ''), 430);    // entrée le 1er : loyer plein
+  near(prorataJours(430, '2026-12', '2026-11-17', ''), 430);    // mois suivant : loyer plein
+  near(prorataJours(310, '2027-02', '2027-02-15', ''), 155);    // février : 14 jours / 28
 });
 test('Simulateur : % travaux en plus par lot et global', () => {
   const c = projCalc({ prix: 100000, notaire: 8, impr: 10, lots: [{ s: 40, l: 500, w: 20000, wp: 25 }, { s: 30, l: 400, w: 10000 }], pcs: [{ m: 5000 }] });
