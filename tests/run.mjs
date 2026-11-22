@@ -35,6 +35,11 @@ test('prix de revient = prix + notaire + travaux', () => {
   const c = projCalc(charbo);
   near(c.frais_notaire, 6160); near(c.travaux_total, 175000); near(c.prix_de_revient, 258160); near(c.surface, 171.22);
 });
+test('Simulateur : % travaux en plus par lot et global', () => {
+  const c = projCalc({ prix: 100000, notaire: 8, impr: 10, lots: [{ s: 40, l: 500, w: 20000, wp: 25 }, { s: 30, l: 400, w: 10000 }], pcs: [{ m: 5000 }] });
+  near(c.travaux_lots_hors_majoration, 30000); near(c.majoration_lots, 5000); near(c.travaux_lots, 35000);
+  near(c.imprevus, 4000); near(c.travaux_total, 44000); near(c.prix_de_revient, 152000);
+});
 test('Simulateur : valeur avant / après travaux', () => {
   const c = projCalc(Object.assign({}, charbo, { vAvant: 90000, vApres: 250000 }));
   near(c.decote_achat, 13000); near(c.valeur_creee_travaux, 160000);
@@ -348,7 +353,7 @@ test('appli : la modification d\'un réglage est datée clé par clé (_kts)', (
 test('fiche lot : loyer ou surface à 0 enregistrés ; champ vide = valeur inchangée', () => {
   const run = (vals) => { const l = { id: 'l1', ref: 'A1', loyer: 500, surface: 30, charges: 50, statut: 'Occupé' }, els = {};
     Object.keys(vals).forEach(k => els[k] = { value: vals[k] });
-    const c = vm.createContext({ gLog: () => l, gLogLoc: () => null, gv: id => (els[id] || { value: '' }).value, persist() {}, cM() {}, refreshCurrentView() {}, buildSidebar() {}, toast() {}, openSortie() {} });
+    const c = vm.createContext({ gLog: () => l, gLogLoc: () => null, gv: id => (els[id] || { value: '' }).value, persist() {}, cM() {}, refreshCurrentView() {}, buildSidebar() {}, toast() {}, openSortie() {}, logChDetailSave() {} });
     vm.runInContext('var DB={_editLogId:"l1"};' + (uiHtml.includes('function numOr(') ? extractUI('numOr') : '') + '\n' + extractUI('saveLog') + ';this.saveLog=saveLog;', c); c.saveLog(); return l; };
   const base = { 'log-ref': 'A1', 'log-type': 'T1', 'log-etage': '', 'log-charges': '50', 'log-statut': 'Occupé', 'log-meuble': 'Non', 'log-dpe': '', 'log-ext': '', 'log-ep': '', 'log-ep-nom': '' };
   let l = run(Object.assign({}, base, { 'log-loyer': '0', 'log-surface': '0' })); assert.equal(l.loyer, 0); assert.equal(l.surface, 0);

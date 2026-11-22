@@ -185,6 +185,19 @@ await test('modifier_lot : DPE complet (GES, fourchette, n° ADEME) et refus des
   await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',energie_min:900,energie_max:100},'https://x'),/fourchette/);
   await assert.rejects(s.mcpCall('modifier_lot',{lot:'Studio 1',dpe_numero:'XYZ'},'https://x'),/ADEME/);
 });
+await test('modifier_ancien_locataire : corrige le dépôt de garantie et la restitution', async () => {
+  const s = store();
+  await s.putData({batiments:[{id:'b1',nom:'Lannion',_ts:1}],logements:[],locataires:[],anciens:[{id:'an1',batId:'b1',lotRef:'Studio 4',prenom:'M',nom:'X',depot:580,_ts:1}]});
+  let r = await s.mcpCall('modifier_ancien_locataire',{id:'an1',depot_garantie:360},'https://x');
+  assert.equal(r.apres.depot,360);
+  let a=(await s.getData()).anciens[0]; assert.equal(a.depot,360); assert.equal(a.depotRendu,undefined);
+  await s.mcpCall('modifier_ancien_locataire',{id:'an1',caution_restituee:true,date_restitution:'2026-11-25'},'https://x');
+  a=(await s.getData()).anciens[0]; assert.equal(a.depotRendu,360); assert.equal(a.depotDate,'2026-11-25');
+  await s.mcpCall('modifier_ancien_locataire',{id:'an1',montant_restitue:400,date_restitution:'2026-11-25'},'https://x');
+  a=(await s.getData()).anciens[0]; assert.equal(a.depotRendu,400,'restitution > dépôt autorisée (prorata de loyer remboursé)');
+  await s.mcpCall('modifier_ancien_locataire',{id:'an1',caution_restituee:false},'https://x');
+  a=(await s.getData()).anciens[0]; assert.equal(a.depotRendu,undefined);
+});
 await test('mode de charges du lot : compteurs individuels / forfait / provision, lu et modifié par le connecteur', async () => {
   const s = store();
   await s.putData({batiments:[{id:'b1',nom:'Lannion',_ts:1}],logements:[{id:'l1',batId:'b1',ref:'Studio 1',loyer:310,charges:20,_ts:1},{id:'l2',batId:'b1',ref:'Studio 2',loyer:310,charges:0,_ts:1},{id:'l3',batId:'b1',ref:'Studio 3',loyer:310,charges:30,chargesDetail:{elecMode:'individuel',eauMode:'forfait',eau:30,autresMode:'aucune',autres:0},_ts:1}],locataires:[]});
