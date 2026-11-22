@@ -2,23 +2,42 @@ name: Deploy to Cloudflare Workers
 
 on:
   push:
-    branches:
-      - main
+  pull_request:
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Contrôle de syntaxe (scripts de l'interface, service worker, worker.js)
+        run: node tests/check-ui.mjs
       - name: Tests de non-régression (calculs, synchronisation, versions)
         run: node tests/run.mjs && node tests/store.mjs
+      - name: Version de la PR strictement supérieure à celle de main
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags origin main
+          ver() { grep -o "^const APP_VERSION = 'immogest-v[0-9]*'" | grep -o '[0-9]*' | tail -1; }
+          PR=$(git show "$HEAD_SHA:worker.js" | ver)
+          MAIN=$(git show origin/main:worker.js | ver)
+          echo "APP_VERSION : PR v$PR, main v$MAIN"
+          if [ -z "$PR" ] || [ -z "$MAIN" ]; then echo "APP_VERSION introuvable"; exit 1; fi
+          if [ "$PR" -le "$MAIN" ]; then echo "::error::APP_VERSION de la PR (v$PR) doit être strictement supérieure à celle de main (v$MAIN)"; exit 1; fi
 
   deploy:
     needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - name: Deploy to Cloudflare Workers
