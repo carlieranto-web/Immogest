@@ -501,5 +501,88 @@ test('libellé « prorata » seulement si le mois est réellement partiel (entr�
 test('prêt : mensualité affichée assurance comprise, avec la part hors assurance précisée', () => {
   assert.ok(/dont assurance/.test(uiHtml) && /hors assurance/.test(uiHtml));
 });
+// ── v165 : robustesse de l'interface, performance, service worker, contrôle de syntaxe
+async function atest(name, fn) { try { await fn(); passed++; console.log('✓ ' + name); } catch (e) { failed++; console.error('✗ ' + name + '\n   ' + e.message); } }
+test('échéancier de prêt : dates formatées par un Intl.DateTimeFormat en cache, résultat identique à toLocaleDateString (appli et serveur)', () => {
+  assert.ok(/DateTimeFormat/.test(extractUI('calAm')), 'formateur de date recréé à chaque ligne (lent sur 35 prêts × 240 mois)');
+  assert.equal(extractUI('calAm'), extract('calAm'));
+  const ref = 'function calAmRef(p){if(Array.isArray(p.schedule)&&p.schedule.length){return p.schedule.map(function(row,i){var d=new Date(row.date);return{n:i+1,date:d.toLocaleDateString(\'fr-FR\',{month:\'short\',year:\'numeric\'}),intr:row.interest,am:row.principal,m:row.total,r:Math.max(0,+row.balance||0)};});}'
+    + 'var t=(+p.taux||0)/100/12,m=calMens(+p.capital||0,+p.taux||0,+p.duree||0),rows=[],r=+p.capital||0,sd=new Date(p.debut);for(var i=1;i<=(+p.duree||0);i++){var intr=r*t,am=m-intr;r-=am;var d=new Date(sd);d.setMonth(d.getMonth()+i-1);rows.push({n:i,date:d.toLocaleDateString(\'fr-FR\',{month:\'short\',year:\'numeric\'}),intr:intr,am:am,m:m,r:Math.max(0,r)});}return rows;}';
+  for (const get of [extractUI, extract]) {
+    const c = vm.createContext({}); vm.runInContext([get('calMens'), get('calAm'), ref, 'this.calAm=calAm;this.calAmRef=calAmRef;'].join('\n'), c);
+    for (const p of [{ capital: 400000, taux: 1.6, duree: 240, debut: '2019-07-05' }, { capital: 1000, taux: 0, duree: 3, debut: 'pas une date' },
+      { hasSchedule: true, schedule: [{ date: '2027-08-05', interest: 10, principal: 90, total: 100, balance: 900 }, { date: '', interest: 0, principal: 0, total: 0, balance: 0 }] }])
+      assert.equal(JSON.stringify(c.calAm(p)), JSON.stringify(c.calAmRef(p)));
+    assert.equal(c.calAm({ capital: 400000, taux: 1.6, duree: 240, debut: '2019-07-05' })[0].date, 'juil. 2019');
+  }
+});
+test('service worker : /api/, /mcp et /oauth ne passent jamais par le cache (données privées), la page oui', () => {
+  const sw = Buffer.from(src.match(/const SW_B64='([A-Za-z0-9+/=]+)'/)[1], 'base64').toString('utf8');
+  const L = {}, self = { location: { origin: 'https://x.test' }, addEventListener: (t, f) => { L[t] = f; }, skipWaiting() {}, clients: { claim() {} } };
+  vm.runInNewContext(sw, { self, caches: { open: () => Promise.resolve({ put() {} }), match: () => Promise.resolve(null), keys: () => Promise.resolve([]) }, fetch: () => Promise.resolve({ status: 200, type: 'basic', clone() { return this; } }), URL });
+  const ev = u => { const e = { request: { method: 'GET', url: 'https://x.test' + u }, n: 0, respondWith() { e.n++; } }; L.fetch(e); return e.n; };
+  for (const u of ['/api/data', '/api/backup?day=2026-11-22', '/api/files/f1/raw', '/mcp', '/oauth/authorize', '/.well-known/oauth-authorization-server']) assert.equal(ev(u), 0, u + ' mis en cache');
+  assert.equal(ev('/'), 1); assert.equal(ev('/manifest.json'), 1);
+});
+const exA = n => { const i = uiHtml.indexOf('function ' + n + '('); return (uiHtml.slice(i - 6, i) === 'async ' ? 'async ' : '') + extractUI(n); }; // garde « async »
+const uiCtx2 = (names, extra = {}) => { const c = vm.createContext(Object.assign({ __t: [], toast(m, e) { c.__t.push([m, !!e]); }, API: { token: 't' }, saveAuth() {}, sessionExpired() {}, window: {}, console: { error() {}, log() {} } }, extra));
+  vm.runInContext(names.map(exA).join('\n'), c); return c; };
+await atest('api() : réseau coupé → {_status:0, error:"Hors ligne"} au lieu d\'une exception', async () => {
+  const c = uiCtx2(['api'], { fetch: () => Promise.reject(new TypeError('Failed to fetch')) });
+  const r = await c.api('/api/devices'); assert.equal(r._status, 0); assert.equal(r.error, 'Hors ligne'); assert.ok(!r.ok);
+});
+await atest('synchro hors ligne : envoi gardé en attente, pas d\'alerte « synchronisation en échec »', async () => {
+  let toasts = 0; const c = uiCtx2(['_syncPushImpl'], { _VIEWMODE: false, _pendingPush: false, SYNC: {}, setSS() {}, dbPayload: () => ({}), syncErrToast() { toasts++; }, api: async () => ({ _status: 0, error: 'Hors ligne' }) });
+  vm.runInContext('var _pendingPush=false,_lastPullAt=0;', c);
+  await c._syncPushImpl(); assert.equal(vm.runInContext('_pendingPush', c), true); assert.match(c.SYNC.lastError, /Hors ligne/); assert.equal(toasts, 0);
+});
+await atest('hors ligne : aucun appelant de api() n\'annonce un succès (connecteur, e-mails, appareils, documents)', async () => {
+  const off = async () => ({ _status: 0, error: 'Hors ligne' }), el = { innerHTML: '' };
+  const c = uiCtx2(['btnBusy', 'btnFree', 'uiErr', 'setMcp', 'revokeMcp', 'clearMailCfg', 'revokeDevice', 'revokeFace', 'delDoc', 'annDel', 'annFirst'], { api: off, confirm: () => true, loadMcp() {}, drawMailCard() { c.__drawn = 1; }, loadDevices() {}, rParams() {}, loadLocDocs() {}, annLoadPhotos() {}, bioName: () => 'Face ID', updFaceBtn() {},
+    _ann: { photos: [{ id: 'p0', ord: 0 }, { id: 'p1', ord: 1 }] }, isO: () => true, esc: s => String(s), document: { getElementById: () => el } });
+  vm.runInContext('var _mailCfg={configured:true};', c);
+  c.setMcp(true); c.revokeMcp('x'); c.clearMailCfg(); await c.revokeDevice('d'); await c.revokeFace('f'); await c.delDoc('f', 'l'); await c.annDel(0); await c.annFirst(1);
+  await new Promise(r => setTimeout(r, 10));
+  assert.ok(c.__t.length >= 8, 'toasts : ' + JSON.stringify(c.__t)); c.__t.forEach(([m, e]) => assert.ok(e, 'succès annoncé hors ligne : ' + m));
+  assert.equal(vm.runInContext('_mailCfg.configured', c), true, 'configuration e-mail effacée de l\'écran alors que rien n\'a été fait');
+});
+const FIN = ['savePINs', 'ribDocBlob', 'delDoc', 'annDel', 'annFirst', 'mailBackupNow', 'doRestore', 'revokeDevice', 'revokeFace', 'loadShares', 'revokeShare'];
+await atest('actions asynchrones : erreur interceptée et bouton réactivé (finally) dans les 11 fonctions', async () => {
+  FIN.forEach(n => assert.ok(/finally\{/.test(extractUI(n)), n + ' sans finally'));
+  const btn = { disabled: false, dataset: {}, tagName: 'BUTTON' };
+  const c = uiCtx2(['btnBusy', 'btnFree', 'uiErr', 'mailBackupNow', 'revokeShare', 'loadShares'], { api: () => Promise.reject(new Error('panne')), loadDevices() {}, window: {}, document: { getElementById: () => ({ innerHTML: '' }) }, pdE: s => s });
+  await c.mailBackupNow(btn); assert.equal(btn.disabled, false, 'bouton resté désactivé'); assert.ok(c.__t.some(([m, e]) => e && /panne/.test(m)));
+  btn.dataset.armed = '1'; await c.revokeShare('s1', btn); assert.equal(btn.disabled, false);
+  await c.loadShares(); // ne lève pas
+  const c2 = uiCtx2(['btnBusy', 'btnFree', 'ribDocBlob'], { fetch: () => Promise.reject(new TypeError('Failed to fetch')) });
+  await assert.rejects(c2.ribDocBlob({ ribFileId: 'f' }), /Hors ligne/);
+});
+test('erreurs inattendues : toast discret (une fois par période) via unhandledrejection et error', () => {
+  assert.ok(/addEventListener\('unhandledrejection'/.test(uiHtml) && /window\.addEventListener\('error'/.test(uiHtml));
+  let now = 1e12; const c = uiCtx2(['uiErrToast'], { Date: { now: () => now } }); vm.runInContext('var _uiErrAt=0;', c);
+  c.uiErrToast(new Error('a')); c.uiErrToast(new Error('b')); assert.equal(c.__t.length, 1); now += 60000; c.uiErrToast('c'); assert.equal(c.__t.length, 2);
+  c.uiErrToast({ name: 'AbortError', message: 'x' }); now += 60000; c.uiErrToast({ name: 'NotAllowedError' }); assert.equal(c.__t.length, 2, 'annulation de l\'utilisateur signalée comme erreur');
+});
+test('mémoire de l\'appareil pleine : indicateur permanent tant que l\'écriture locale échoue, retiré quand elle réussit', () => {
+  let full = true; const nodes = {}, body = { appendChild(n) { nodes[n.id] = n; n.remove = () => { delete nodes[n.id]; }; } };
+  const c = uiCtx2(['writeLocal', 'lsWarn'], { _VIEWMODE: false, SK: 'k', DB: {}, localStorage: { setItem() { if (full) throw new Error('QuotaExceededError'); } },
+    document: { body, getElementById: id => nodes[id] || null, createElement: () => ({ style: {}, setAttribute() {} }) } });
+  vm.runInContext('var _storageWarned=false;', c);
+  assert.equal(c.writeLocal(), false); assert.ok(nodes['ls-warn'], 'pas d\'indicateur'); assert.match(nodes['ls-warn'].textContent, /mémoire/i);
+  c.writeLocal(); assert.equal(Object.keys(nodes).length, 1); assert.equal(c.__t.length, 1, 'un seul toast');
+  full = false; assert.equal(c.writeLocal(), true); assert.equal(nodes['ls-warn'], undefined, 'indicateur non retiré');
+});
+test('sauvegarde du serveur en échec : bandeau du tableau de bord (propriétaire) et Paramètres', () => {
+  const c = uiCtx2(['bkErrHtml'], { isO: () => true, _VIEWMODE: false, esc: s => String(s).replace(/</g, '&lt;'), SYNC: { bkErr: { at: Date.UTC(2026, 10, 22, 8), day: '2026-11-22', message: 'quota <dépassé>' } } });
+  const h = c.bkErrHtml(); assert.match(h, /sauvegarde/i); assert.ok(h.includes('quota &lt;dépassé>'));
+  c.SYNC.bkErr = null; assert.equal(c.bkErrHtml(), '');
+  assert.ok(/bkErrHtml\(\)/.test(extractUI('rDash')), 'bandeau absent du tableau de bord'); assert.ok(/backupErr/.test(extractUI('loadDevices')));
+  assert.ok(/SYNC\.bkErr=/.test(extractUI('_syncPushImpl')) && /SYNC\.bkErr=/.test(extractUI('_syncPullImpl')));
+});
+await atest('contrôle de syntaxe : chaque <script> de l\'interface et worker.js compilent (tests/check-ui.mjs)', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync(process.execPath, [new URL('./check-ui.mjs', import.meta.url).pathname], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed ? 1 : 0);

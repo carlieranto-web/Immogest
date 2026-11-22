@@ -579,5 +579,66 @@ await test('anciens_locataires : le paiement du nouvel entrant au mois de sortie
   await s.putData(d); const r = await s.mcpCall('anciens_locataires', { recherche: 'collet' }, 'https://x');
   assert.equal(r.anciens[0].paiements, 2); assert.equal(r.anciens[0].total_encaisse, 825);
 });
+// ── v165 : fiabilité (verrou d'écriture, sauvegarde quotidienne découpée, page servie)
+const raceBase = () => ({ batiments: [{ id: 'b0', nom: 'Immeuble 0', _ts: 1 }], logements: [{ id: 'l0', batId: 'b0', ref: 'Apt 0', loyer: 500, charges: 50, statut: 'Occupé', _ts: 1 }, { id: 'l1', batId: 'b0', ref: 'Apt 1', loyer: 400, charges: 40, statut: 'Vacant', _ts: 1 }],
+  locataires: [{ id: 't0', logId: 'l0', prenom: 'A', nom: 'B', entree: '2025-01-01', _ts: 1 }], paiements: [], edls: [{ id: 'e0', logId: 'l0', sig: { img: 'x'.repeat(200000) }, _ts: 1 }], settings: {} });
+await test('verrou d\'écriture : synchro de l\'appli et encaissement du connecteur simultanés → les deux sont gardés (10 essais)', async () => {
+  for (let k = 0; k < 10; k++) {
+    const s = store(), tok = await sess(s); await s.putData(raceBase());
+    const app = raceBase(); app.logements[1].notes = 'modif appli ' + k; app.logements[1]._ts = Date.now(); // copie de l'appareil sans l'encaissement
+    const [ra, rm] = await Promise.all([call(s, tok, '/api/data', { method: 'PUT', body: JSON.stringify({ data: app }) }),
+      s.mcpCall('enregistrer_encaissement', { lot: 'Apt 0', batiment: 'Immeuble 0', mois: '2030-01', montant: 250 }, 'https://x')]);
+    assert.equal(ra.status, 200); assert.ok(rm.ok, JSON.stringify(rm));
+    const fin = await s.getData();
+    assert.ok(fin.paiements.some(p => p.logId === 'l0' && p.mois === '2030-01'), 'essai ' + k + ' : encaissement du connecteur perdu');
+    assert.equal(fin.logements.find(l => l.id === 'l1').notes, 'modif appli ' + k, 'essai ' + k + ' : modification de l\'appli perdue');
+  }
+});
+await test('verrou d\'écriture : un outil qui en rappelle un autre (modifier_batiment → résidence principale) ne se bloque pas', async () => {
+  const s = store(); await s.putData({ batiments: [], logements: [], locataires: [], prets: [], settings: {} });
+  const r = await Promise.race([s.mcpCall('modifier_batiment', { batiment: 'résidence principale', valeur_marche: 300000 }, 'https://x').then(x => x, e => ({ erreur: e.message })), new Promise(r => setTimeout(() => r('bloqué'), 3000))]);
+  assert.notEqual(r, 'bloqué', 'interblocage');
+  const r2 = await Promise.race([s.mcpCall('lots', {}, 'https://x').then(() => 'ok', () => 'ok'), new Promise(r => setTimeout(() => r('bloqué'), 3000))]);
+  assert.equal(r2, 'ok', 'la file reste utilisable après un appel imbriqué');
+});
+const bigData = () => { const d = raceBase(); d.edls = [];
+  // signatures factices non compressibles : ~2,4 Mo une fois compressé
+  for (let i = 0; i < 40; i++) { const u = new Uint8Array(60000); crypto.getRandomValues(u); d.edls.push({ id: 'r' + i, logId: 'l0', sig: { img: Buffer.from(u).toString('base64') }, _ts: 1 }); }
+  return d; };
+const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' });
+await test('sauvegarde quotidienne : base > 1,9 Mo compressée → copie du jour en blocs, listée, relue à l\'identique et restaurable', async () => {
+  const s = store(), tok = await sess(s), d = bigData(); await s.putData(d);
+  for (let i = 1; i <= 8; i++) { const day = '2020-01-0' + i; await s.storage.put('bk:' + day, { chunks: 2, size: 4 }); await s.storage.put('bkc:' + day + ':0', new Uint8Array(2).buffer); await s.storage.put('bkc:' + day + ':1', new Uint8Array(2).buffer); }
+  await s.backup(); const day = today();
+  const meta = await s.storage.get('bk:' + day); assert.ok(meta && meta.chunks >= 2, 'copie du jour absente ou non découpée');
+  assert.equal(await s.storage.get('bk:last'), day); assert.equal(await s.storage.get('bk:err'), undefined);
+  const dev = await (await call(s, tok, '/api/devices')).json(); assert.ok(dev.backups.includes(day)); assert.equal(dev.backupErr, null);
+  assert.equal(dev.backups.length, 7, '7 jours glissants');
+  const left = [...(await s.storage.list({ prefix: 'bkc:2020-01-0' })).keys()].map(k => k.slice(4, 14)); assert.ok(!left.includes('2020-01-01') && !left.includes('2020-01-02'), 'blocs des jours supprimés nettoyés');
+  const txt = await (await call(s, tok, '/api/backup?day=' + day)).text(); assert.deepEqual(JSON.parse(txt), await s.getData());
+  const rr = await (await call(s, tok, '/api/backup/restore', { method: 'POST', body: JSON.stringify({ confirm: 'RESTAURER', day }) })).json(); assert.equal(rr.ok, true, rr.error);
+  assert.equal((await s.getData()).edls.length, d.edls.length);
+});
+await test('sauvegarde quotidienne : échec d\'écriture → bk:err exposé (appli, contrôle des données), bk:last inchangé, nouvel essai réussi efface l\'erreur', async () => {
+  const s = store(), tok = await sess(s); await s.putData(raceBase());
+  const put = s.storage.put.bind(s.storage); let fail = true;
+  s.storage.put = async (k, v) => { const ks = typeof k === 'object' ? Object.keys(k) : [k]; if (fail && ks.some(x => /^bk(c)?:20/.test(x))) throw new Error('quota dépassé'); return put(k, v); };
+  await s.backup();
+  const er = await s.storage.get('bk:err'); assert.ok(er && /quota/.test(er.message) && er.at > 0, 'bk:err absent'); assert.equal(await s.storage.get('bk:last'), undefined, 'bk:last ne doit pas être mis à jour');
+  const dev = await (await call(s, tok, '/api/devices')).json(); assert.match(JSON.stringify(dev.backupErr), /quota/);
+  const g = await (await call(s, tok, '/api/data')).json(); assert.match(JSON.stringify(g.bkErr), /quota/, 'erreur transmise à l\'appli (bandeau)');
+  const c = await s.mcpCall('controle_donnees', {}, 'https://x'); assert.ok(c.points.some(p => /sauvegarde/i.test(p.probleme) && /quota/.test(p.probleme)), 'controle_donnees ne signale pas l\'échec');
+  fail = false; await s.backup(true);
+  assert.equal(await s.storage.get('bk:last'), today()); assert.equal(await s.storage.get('bk:err'), undefined);
+});
+await test('page de l\'appli : HEAD sans corps avec X-App-Version, ETag = version, 304 si If-None-Match correspond', async () => {
+  const v = src.match(/const APP_VERSION = '([^']+)'/)[1];
+  const h = await W.default.fetch(new Request('https://x/', { method: 'HEAD' }), {});
+  assert.equal(h.status, 200); assert.equal(h.headers.get('X-App-Version'), v); assert.ok(h.body === null, 'HEAD avec corps'); assert.equal(await h.text(), '');
+  const g = await W.default.fetch(new Request('https://x/'), {}); const html = await g.text();
+  assert.ok(html.includes("window.APP_VERSION='" + v + "'")); assert.equal(g.headers.get('ETag'), '"' + v + '"'); assert.match(g.headers.get('Cache-Control'), /no-store/); assert.equal(g.headers.get('X-Frame-Options'), 'DENY');
+  const n = await W.default.fetch(new Request('https://x/', { headers: { 'If-None-Match': 'W/"' + v + '"' } }), {}); assert.equal(n.status, 304); assert.equal(await n.text(), ''); assert.equal(n.headers.get('X-App-Version'), v);
+  const o = await W.default.fetch(new Request('https://x/', { headers: { 'If-None-Match': '"immogest-v1"' } }), {}); assert.equal(o.status, 200);
+});
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed?1:0);
