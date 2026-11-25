@@ -601,9 +601,17 @@ await atest('contrôle de syntaxe : chaque <script> de l\'interface et worker.js
   const r = spawnSync(process.execPath, [new URL('./check-ui.mjs', import.meta.url).pathname], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
 });
+test('Quittance : limitée au bail du locataire actuel ; ancien locataire sur ses propres dates', () => {
+  const DB = { logements: [{ id: 'L', loyer: 420, charges: 20 }], locataires: [{ id: 'c', logId: 'L', entree: '2026-10-20' }], paiements: [], baux: [] };
+  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'prorataJours', 'qMoisFin', 'qDuM'], DB);
+  const anc = { locId: 'old', logId: 'L', entree: '2024-03-10', sortie: '2026-10-15' };
+  near(c.qDuM(DB.logements[0], anc, '2026-09', { mois: '2026-09', montant: 440 }), 440); // mois plein de l'ancien locataire (pas 0 du nouveau)
+  near(c.qDuM(DB.logements[0], anc, '2026-10', null), 440 * 15 / 31);                    // sortie le 15/10
+  near(c.qDuM(DB.logements[0], DB.locataires[0], '2026-10', null), 440 * 12 / 31);       // entrée du nouveau le 20/10
+});
 test('Loyers du mois : ligne et totaux d\'immeuble au dû du mois d\'entrée (prorata loyer + charges), activation du bail et bail au prorata', () => {
   const DB = uiDB(); DB.locataires[0].entree = '2026-10-16';
-  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'prorataJours', 'qMoisFin', 'qMoisLabel', 'qPerMois', 'eur2', 'fmt', 'lrDu', 'lrAmtHtml', 'duHC'], DB);
+  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'prorataJours', 'qMoisFin', 'qMoisLabel', 'qDuM', 'qPerMois', 'eur2', 'fmt', 'lrDu', 'lrAmtHtml', 'duHC'], DB);
   const r = { l: DB.logements[0], loc: DB.locataires[0], pai: null, status: 'late' };
   near(c.lrDu(r, '2026-10'), 283.87); const h = c.lrAmtHtml(r, '2026-10');
   assert.ok(h.includes('prorata entrée 16/10') && /= 283,87/.test(h.replace(/\s/g, ' ')), h);
