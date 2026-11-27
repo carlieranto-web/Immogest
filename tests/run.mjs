@@ -228,7 +228,7 @@ function extractUI(name) {
   }
   throw new Error('fin de ' + name + ' introuvable');
 }
-const UI_PAI = ['gLoc', 'gLog', 'gLogLoc', 'gPai', 'paiDu', 'duMois', 'prorataJours', 'locMoisListe', 'majStatutLoc', 'recalcPai', 'quickPay', 'validerBank', 'addVersement', 'locNom', 'fmt'];
+const UI_PAI = ['gLoc', 'gLog', 'gLogLoc', 'gPai', 'paiDu', 'duMois', 'lotLoyerAt', 'lotMoisNext', 'lotLoyerDefMois', 'lotSetLoyer', 'prorataJours', 'locMoisListe', 'majStatutLoc', 'recalcPai', 'quickPay', 'validerBank', 'addVersement', 'locNom', 'fmt'];
 // Contexte appli : DOM, toasts et sauvegarde neutralisés ; NOW figé au 19/11/2026
 function uiCtx(DB, els = {}) {
   const c = vm.createContext({ confirm: () => true, toast: () => {}, persist: () => {}, updateNB: () => {}, gPage: () => {}, paiRefresh: () => {}, renderVersModal: () => {},
@@ -371,7 +371,7 @@ test('fiche lot : loyer ou surface à 0 enregistrés ; champ vide = valeur incha
   const run = (vals) => { const l = { id: 'l1', ref: 'A1', loyer: 500, surface: 30, charges: 50, statut: 'Occupé' }, els = {};
     Object.keys(vals).forEach(k => els[k] = { value: vals[k] });
     const c = vm.createContext({ gLog: () => l, gLogLoc: () => null, gv: id => (els[id] || { value: '' }).value, persist() {}, cM() {}, refreshCurrentView() {}, buildSidebar() {}, toast() {}, openSortie() {}, logChDetailSave() {} });
-    vm.runInContext('var DB={_editLogId:"l1"};' + (uiHtml.includes('function numOr(') ? extractUI('numOr') : '') + '\n' + extractUI('saveLog') + ';this.saveLog=saveLog;', c); c.saveLog(); return l; };
+    vm.runInContext('var DB={_editLogId:"l1"};' + (uiHtml.includes('function numOr(') ? extractUI('numOr') : '') + '\n' + ['lotMoisNext','lotLoyerDefMois','lotSetLoyer'].map(extractUI).join('\n') + '\nvar NOW=new Date("2026-11-15T12:00:00Z");DB.paiements=[];qMoisLabel=function(m){return m;};\n' + extractUI('saveLog') + ';this.saveLog=saveLog;', c); c.saveLog(); return l; };
   const base = { 'log-ref': 'A1', 'log-type': 'T1', 'log-etage': '', 'log-charges': '50', 'log-statut': 'Occupé', 'log-meuble': 'Non', 'log-dpe': '', 'log-ext': '', 'log-ep': '', 'log-ep-nom': '' };
   let l = run(Object.assign({}, base, { 'log-loyer': '0', 'log-surface': '0' })); assert.equal(l.loyer, 0); assert.equal(l.surface, 0);
   l = run(Object.assign({}, base, { 'log-loyer': '', 'log-surface': '' })); assert.equal(l.loyer, 500); assert.equal(l.surface, 30);
@@ -462,7 +462,7 @@ test('fiche ancien locataire : ne liste pas le paiement du nouvel entrant du moi
   assert.equal(extract('ancPaiFiltre'), extractUI('ancPaiFiltre'));
   assert.ok(/ancPaiFiltre\(a,DB\.paiements,DB\.locataires\)/.test(extractUI('ancPais')), 'ancPais utilise ancPaiFiltre');
 });
-const PAI_FN = ['gLog', 'gBat', 'gLogLoc', 'paiOf', 'paiDu', 'duMois', 'prorataJours', 'locMoisListe', 'majStatutLoc', 'r2', 'fmt', 'fmtC', 'savePai'];
+const PAI_FN = ['gLog', 'gBat', 'gLogLoc', 'paiOf', 'paiDu', 'duMois', 'lotLoyerAt', 'lotMoisNext', 'lotLoyerDefMois', 'lotSetLoyer', 'prorataJours', 'locMoisListe', 'majStatutLoc', 'r2', 'fmt', 'fmtC', 'savePai'];
 test('enregistrer un paiement : « Payé » choisi à la main pour 400 € sur 550 € dus → Partiel', () => {
   const DB = uiDB(); DB.batiments = []; DB._cl = 'l1'; DB._cv = {};
   const els = { 'pai-mois': { value: '2026-10' }, 'pai-montant': { value: '400' }, 'pai-date': { value: '2026-10-05' }, 'pai-mode': { value: 'Virement' }, 'pai-statut': { value: 'Payé' } };
@@ -604,7 +604,7 @@ await atest('contrôle de syntaxe : chaque <script> de l\'interface et worker.js
 test('Statut de paiement : pas de « Retard » pour les mois antérieurs au suivi du lot dans l\'appli (Studio K)', () => {
   const DB = { logements: [{ id: 'K', loyer: 395, charges: 0 }], locataires: [{ id: 'm', logId: 'K', entree: '2025-11-21', statutPaiement: 'Retard' }], baux: [],
     paiements: ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11'].map(mo => ({ logId: 'K', mois: mo, montant: 395, du: 395 })) };
-  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'prorataJours', 'locMoisListe', 'majStatutLoc'], DB);
+  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'lotLoyerAt', 'lotMoisNext', 'lotLoyerDefMois', 'lotSetLoyer', 'prorataJours', 'locMoisListe', 'majStatutLoc'], DB);
   c.majStatutLoc(DB.locataires[0]);
   assert.equal(DB.locataires[0].statutPaiement, 'À jour');
   DB.paiements[2].montant = 0; c.majStatutLoc(DB.locataires[0]);
@@ -612,7 +612,7 @@ test('Statut de paiement : pas de « Retard » pour les mois antérieurs au suiv
 });
 test('Quittance : limitée au bail du locataire actuel ; ancien locataire sur ses propres dates', () => {
   const DB = { logements: [{ id: 'L', loyer: 420, charges: 20 }], locataires: [{ id: 'c', logId: 'L', entree: '2026-10-20' }], paiements: [], baux: [] };
-  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'prorataJours', 'qMoisFin', 'qDuM'], DB);
+  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'lotLoyerAt', 'lotMoisNext', 'lotLoyerDefMois', 'lotSetLoyer', 'prorataJours', 'qMoisFin', 'qDuM'], DB);
   const anc = { locId: 'old', logId: 'L', entree: '2024-03-10', sortie: '2026-10-15' };
   near(c.qDuM(DB.logements[0], anc, '2026-09', { mois: '2026-09', montant: 440 }), 440); // mois plein de l'ancien locataire (pas 0 du nouveau)
   near(c.qDuM(DB.logements[0], anc, '2026-10', null), 440 * 15 / 31);                    // sortie le 15/10
@@ -620,7 +620,7 @@ test('Quittance : limitée au bail du locataire actuel ; ancien locataire sur se
 });
 test('Loyers du mois : ligne et totaux d\'immeuble au dû du mois d\'entrée (prorata loyer + charges), activation du bail et bail au prorata', () => {
   const DB = uiDB(); DB.locataires[0].entree = '2026-10-16';
-  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'prorataJours', 'qMoisFin', 'qMoisLabel', 'qDuM', 'qPerMois', 'eur2', 'fmt', 'lrDu', 'lrAmtHtml', 'duHC'], DB);
+  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'lotLoyerAt', 'lotMoisNext', 'lotLoyerDefMois', 'lotSetLoyer', 'prorataJours', 'qMoisFin', 'qMoisLabel', 'qDuM', 'qPerMois', 'eur2', 'fmt', 'lrDu', 'lrAmtHtml', 'duHC'], DB);
   const r = { l: DB.logements[0], loc: DB.locataires[0], pai: null, status: 'late' };
   near(c.lrDu(r, '2026-10'), 283.87); const h = c.lrAmtHtml(r, '2026-10');
   assert.ok(h.includes('prorata entrée 16/10') && /= 283,87/.test(h.replace(/\s/g, ' ')), h);
@@ -631,5 +631,23 @@ test('Loyers du mois : ligne et totaux d\'immeuble au dû du mois d\'entrée (pr
   assert.ok(/entreeAppliquer\(nl,''\)/.test(extractUI('activateBail')), 'activation du bail : 1er mois au prorata');
   assert.ok(/Premier mois \(période '\+qPeriodeJours\(ms/.test(extractUI('buildBailHTML')), 'bail : montant du 1er mois au prorata');
 });
+test('changement de loyer : les mois passés gardent l\'ancien loyer, les mois suivants le nouveau', () => {
+  const l = { id: 'l1', ref: 'A1', loyer: 500, charges: 50, statut: 'Occupé' };
+  const DB = { logements: [l], locataires: [{ id: 'c1', logId: 'l1', entree: '2025-01-01' }], paiements: [{ id: 'p1', logId: 'l1', mois: '2026-11', montant: 550, statut: 'Payé', du: 550 }] };
+  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'lotLoyerAt', 'lotMoisNext', 'lotLoyerDefMois', 'lotSetLoyer', 'prorataJours', 'qMoisFin', 'qDuM', 'qPerMois'], DB);
+  vm.runInContext('NOW=new Date("2026-11-20T12:00:00Z");', c);
+  assert.equal(c.lotLoyerDefMois(l), '2026-12', 'mois en cours déjà encaissé → mois suivant');
+  assert.ok(c.lotSetLoyer(l, 520, 50, ''));
+  near(c.duMois('l1', '2026-10'), 550, 0.01, 'octobre (passé)'); near(c.duMois('l1', '2026-11'), 550, 0.01, 'novembre (déjà encaissé)'); near(c.duMois('l1', '2027-01'), 570, 0.01, 'janvier (futur)');
+  const q = c.qPerMois(l, DB.locataires[0], '2026-09', null, 520, 50); near(q.loyer, 500, 0.01, 'quittance de septembre : ancien loyer');
+  c.lotSetLoyer(l, 530, 50, '2026-12'); near(c.duMois('l1', '2026-11'), 550, 0.01, '2e modif : passé intact'); near(c.duMois('l1', '2026-12'), 580);
+  l.loyer = 540; near(c.duMois('l1', '2027-02'), 590, 0.01, 'modif directe : période en cours'); near(c.duMois('l1', '2026-06'), 550, 0.01, 'modif directe : passé intact');
+});
+test('entrée prévue : bouton ✕ pour la supprimer (fiche, disponibilités, formulaire du lot)', () => {
+  assert.ok(uiHtml.includes('function clearEntreePrevue('));
+  assert.ok((uiHtml.match(/clearEntreePrevue\(\\'/g) || []).length >= 2, 'bouton ✕ sur la fiche et dans les disponibilités');
+  assert.ok(/id="log-ep"[^]*?✕<\/button>/.test(uiHtml), 'bouton ✕ dans le formulaire du lot');
+});
+
 console.log(`\n${passed} réussi(s), ${failed} échec(s)`);
 process.exit(failed ? 1 : 0);
