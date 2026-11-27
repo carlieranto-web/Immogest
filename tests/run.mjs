@@ -601,6 +601,15 @@ await atest('contrôle de syntaxe : chaque <script> de l\'interface et worker.js
   const r = spawnSync(process.execPath, [new URL('./check-ui.mjs', import.meta.url).pathname], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
 });
+test('Statut de paiement : pas de « Retard » pour les mois antérieurs au suivi du lot dans l\'appli (Studio K)', () => {
+  const DB = { logements: [{ id: 'K', loyer: 395, charges: 0 }], locataires: [{ id: 'm', logId: 'K', entree: '2025-11-21', statutPaiement: 'Retard' }], baux: [],
+    paiements: ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11'].map(mo => ({ logId: 'K', mois: mo, montant: 395, du: 395 })) };
+  const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'prorataJours', 'locMoisListe', 'majStatutLoc'], DB);
+  c.majStatutLoc(DB.locataires[0]);
+  assert.equal(DB.locataires[0].statutPaiement, 'À jour');
+  DB.paiements[2].montant = 0; c.majStatutLoc(DB.locataires[0]);
+  assert.equal(DB.locataires[0].statutPaiement, 'Retard'); // un vrai mois impayé reste détecté
+});
 test('Quittance : limitée au bail du locataire actuel ; ancien locataire sur ses propres dates', () => {
   const DB = { logements: [{ id: 'L', loyer: 420, charges: 20 }], locataires: [{ id: 'c', logId: 'L', entree: '2026-10-20' }], paiements: [], baux: [] };
   const c = uiRun(['gLog', 'gLogLoc', 'paiDu', 'duMois', 'prorataJours', 'qMoisFin', 'qDuM'], DB);
